@@ -1,8 +1,10 @@
 # claudes
 
-Run multiple Claude Code sessions in parallel and jump between them. tmux underneath, nothing on top.
+A very lightweight manager for your claude(s). tmux underneath.
 
-Like `screen` for `claude`: sessions keep running after you detach, so you can kick off long tasks, walk away, and come back to find them done.
+* like `screen` for `claude` — sessions keep running after you detach.
+* use `claudes logs` or `claudes send` to read/write without opening the session.
+* or `claudes open` to hop in.
 
 ## Quickstart
 
