@@ -1,10 +1,10 @@
 # claudes
 
-A very lightweight manager for your claude(s). tmux underneath.
+a lightweight manager for your claude(s). tmux underneath.
 
 * like `screen` for `claude` — sessions keep running after you detach.
 * use `claudes logs` or `claudes send` to read/write without opening the session.
-* or `claudes open` to hop in.
+* or `claudes open` to hop in 🕳️🐇
 
 ## Quickstart
 
