@@ -1,0 +1,177 @@
+package cmd
+
+import (
+	"bufio"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+
+	"github.com/spf13/cobra"
+	"golang.org/x/term"
+
+	"github.com/timdavies/claudes/internal/hooks"
+	"github.com/timdavies/claudes/internal/session"
+	"github.com/timdavies/claudes/internal/tmux"
+)
+
+var (
+	newDir     string
+	newProject string
+	newAttach  bool
+	newSonnet  bool
+	newOpus    bool
+)
+
+var newCmd = &cobra.Command{
+	Use:                "new [name] [-- claude-flags...]",
+	Short:              "Create a new session",
+	DisableFlagParsing: false,
+	Args:               cobra.ArbitraryArgs,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		cfg, err := loadConfig()
+		if err != nil {
+			return err
+		}
+		client := newClient(cfg)
+
+		// Split positional args from passthrough at `--`.
+		atDash := cmd.ArgsLenAtDash()
+		var positional, passthrough []string
+		if atDash < 0 {
+			positional = args
+		} else {
+			positional = args[:atDash]
+			passthrough = args[atDash:]
+		}
+		if len(positional) > 1 {
+			return fmt.Errorf("at most one name argument allowed")
+		}
+
+		cwd, err := os.Getwd()
+		if err != nil {
+			return err
+		}
+		resolved, err := cfg.Resolve(newDir, newProject, cwd)
+		if err != nil {
+			return err
+		}
+		if newSonnet {
+			resolved.Model = resolved.Models["sonnet"]
+		}
+		if newOpus {
+			resolved.Model = resolved.Models["opus"]
+		}
+
+		// Name
+		var displayName string
+		if len(positional) == 1 {
+			displayName = positional[0]
+		} else {
+			suggested, err := suggestName(client, cfg.Prefix, resolved.Project, resolved.Dir)
+			if err != nil {
+				return err
+			}
+			displayName, err = promptName(suggested)
+			if err != nil {
+				return err
+			}
+		}
+		full := session.FullName(cfg.Prefix, displayName)
+
+		has, err := client.Has(full)
+		if err != nil {
+			return err
+		}
+		if has {
+			return fmt.Errorf("session %q already exists", displayName)
+		}
+
+		cmdline := []string{"claude"}
+		cmdline = append(cmdline, resolved.DefaultArgs...)
+		if resolved.Model != "" {
+			cmdline = append(cmdline, "--model", resolved.Model)
+		}
+		cmdline = append(cmdline, passthrough...)
+
+		if err := client.NewSession(full, resolved.Dir, nil, cmdline); err != nil {
+			return err
+		}
+
+		_ = hooks.Run("post_new", resolved.Hooks.PostNew,
+			hookEnv(displayName, resolved.Project, resolved.Dir, resolved.Model))
+
+		fmt.Println(displayName)
+
+		if newAttach {
+			return client.Attach(full)
+		}
+		return nil
+	},
+}
+
+func init() {
+	newCmd.Flags().StringVarP(&newDir, "dir", "d", "", "Working directory")
+	newCmd.Flags().StringVar(&newProject, "project", "", "Project name from config")
+	newCmd.Flags().BoolVarP(&newAttach, "attach", "a", false, "Attach immediately")
+	newCmd.Flags().BoolVar(&newSonnet, "sonnet", false, "Use sonnet model")
+	newCmd.Flags().BoolVar(&newOpus, "opus", false, "Use opus model")
+	rootCmd.AddCommand(newCmd)
+}
+
+// suggestName returns the next available "<base>-N" name. base is the project
+// name when resolved, else the working directory basename.
+func suggestName(client *tmux.Client, prefix, project, dir string) (string, error) {
+	infos, err := client.List()
+	if err != nil {
+		return "", err
+	}
+	used := map[string]bool{}
+	for _, i := range infos {
+		used[i.Name] = true
+	}
+	base := strings.TrimSpace(project)
+	if base == "" {
+		base = filepath.Base(dir)
+	}
+	base = strings.Trim(base, "-./ ")
+	// Avoid colliding with the configured tmux prefix (e.g. base="claudes" + prefix="claudes-").
+	if base == "" || base == strings.TrimRight(prefix, "-") {
+		base = "claude"
+	}
+	for i := 1; i < 10000; i++ {
+		c := fmt.Sprintf("%s-%d", base, i)
+		if !used[prefix+c] {
+			return c, nil
+		}
+	}
+	return "", fmt.Errorf("could not find an unused name")
+}
+
+// promptName asks the user for a name, defaulting to suggested. Empty input or
+// a non-TTY uses the suggestion.
+func promptName(suggested string) (string, error) {
+	if !term.IsTerminal(int(os.Stdin.Fd())) || os.Getenv("CLAUDES_NO_INTERACTIVE") != "" {
+		return suggested, nil
+	}
+	fmt.Fprintf(os.Stderr, "Workspace name [%s]: ", suggested)
+	r := bufio.NewReader(os.Stdin)
+	line, err := r.ReadString('\n')
+	if err != nil && line == "" {
+		return suggested, nil
+	}
+	name := strings.TrimSpace(line)
+	if name == "" {
+		return suggested, nil
+	}
+	return name, nil
+}
+
+func hookEnv(name, project, dir, model string) map[string]string {
+	return map[string]string{
+		"CLAUDES_NAME":    name,
+		"CLAUDES_PROJECT": project,
+		"CLAUDES_DIR":     dir,
+		"CLAUDES_MODEL":   model,
+	}
+}
