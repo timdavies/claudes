@@ -2,6 +2,8 @@ package tmux
 
 import (
 	"bytes"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -122,9 +124,53 @@ func (c *Client) Kill(name string) error {
 	return nil
 }
 
-// SendKeys types text into the first pane and presses Enter.
+// SendKeys sends text into the first pane as a single bracketed-paste block,
+// then presses Enter to submit.
+//
+// Implementation note: we route the body through a tmux paste buffer
+// (load-buffer + paste-buffer -p) rather than `send-keys -l`. Two reasons:
+//
+//  1. `send-keys -l <text>` passes the entire body as a single argv, which
+//     hits the OS argv limit at ~17KB.
+//  2. tmux 3.4+ wraps long literal text in bracketed-paste markers and may
+//     split the input into multiple chunks; Claude Code's TUI then consumes
+//     the trailing Enter as part of paste-edit-mode exit instead of submitting
+//     the prompt. paste-buffer -p delivers the whole payload as one paste.
+//
+// "Literally" still applies: tmux key-name interpretation is disabled for the
+// body — passing "Up" pastes the two characters U, p, not the Up arrow. Use
+// SendRawKeys for key names. When text is empty we just send Enter (the
+// `/exit` flow in cmd/stop.go relies on this).
 func (c *Client) SendKeys(name, text string) error {
-	out, err := c.cmd("send-keys", "-t", name, text, "Enter").CombinedOutput()
+	if text != "" {
+		// Unique buffer name per call so concurrent sends don't collide and a
+		// leak (if paste-buffer never runs) is harmless rather than corrupting
+		// the next send.
+		var randBytes [8]byte
+		if _, err := rand.Read(randBytes[:]); err != nil {
+			return fmt.Errorf("tmux send-keys: random buffer name: %w", err)
+		}
+		buf := "claudes-send-" + hex.EncodeToString(randBytes[:])
+
+		loadCmd := c.cmd("load-buffer", "-b", buf, "-")
+		loadCmd.Stdin = strings.NewReader(text)
+		var loadOut bytes.Buffer
+		loadCmd.Stdout = &loadOut
+		loadCmd.Stderr = &loadOut
+		if err := loadCmd.Run(); err != nil {
+			return fmt.Errorf("tmux load-buffer: %w: %s", err, strings.TrimSpace(loadOut.String()))
+		}
+
+		// -p: bracketed paste; -d: delete buffer after pasting.
+		out, err := c.cmd("paste-buffer", "-p", "-d", "-b", buf, "-t", name).CombinedOutput()
+		if err != nil {
+			// paste-buffer didn't consume the buffer — clean it up so it
+			// doesn't sit on the server forever.
+			_, _ = c.cmd("delete-buffer", "-b", buf).CombinedOutput()
+			return fmt.Errorf("tmux paste-buffer: %w: %s", err, strings.TrimSpace(string(out)))
+		}
+	}
+	out, err := c.cmd("send-keys", "-t", name, "Enter").CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("tmux send-keys: %w: %s", err, strings.TrimSpace(string(out)))
 	}
