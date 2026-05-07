@@ -15,6 +15,8 @@ description: Manage Claude Code sessions via the `claudes` CLI — a screen-like
 
 For visual layout (windows, workspaces, panes, browsers, notifications), use the `cmux` skill instead. For sending input to a *non-Claude* shell, use `cmux send`/`cmux send-key`. `claudes` is specifically for Claude Code sessions.
 
+`send` and `logs` are still accepted as aliases for `write` and `read` respectively, for backwards compatibility.
+
 ## Commands
 
 | Goal | Command |
@@ -22,9 +24,9 @@ For visual layout (windows, workspaces, panes, browsers, notifications), use the
 | List sessions (with descriptions) | `claudes ls` |
 | Create a session | `claudes new <name> -d <dir>` (omit name for picker; add `-- <claude-flags>` to pass through) |
 | Attach interactively | `claudes open <name>` |
-| Send a message + Enter | `claudes send <name> "<message>"` |
-| Send raw keys (no Enter) | `claudes send --keys <name> <key>...` (e.g. `Escape`, `Up`, `C-c`, `BSpace`) |
-| Read recent output | `claudes logs <name>` (default 50 lines; `-n N`, `-f` to follow) |
+| Write a message + Enter | `claudes write <name> "<message>"` |
+| Write raw keys (no Enter) | `claudes write --keys <name> <key>...` (e.g. `Escape`, `Up`, `C-c`, `BSpace`) |
+| Read recent output | `claudes read <name>` (default 50 lines; `-n N`, `-f` to follow) |
 | Rename a session | `claudes rename <old> <new>` (or `claudes rename <new>` for picker) |
 | Graceful stop | `claudes stop <name>` (sends `/exit`, waits, then kills) |
 | Force kill | `claudes kill <name>` (alias for `stop --force`) |
@@ -41,42 +43,42 @@ Most commands accept no name and open an interactive picker.
 
 A background daemon auto-spawns on first `claudes new`/`open`/`ls` and self-exits when no sessions remain. Every minute (or `CLAUDES_DAEMON_TICK=15s` for dev) it captures each session's pane, hashes it, and asks `claude -p --model haiku` for an 8-12 word description. The result is written to the tmux session env (`@claudes-description`) and shown in `claudes ls`. State files live in `~/.cache/claudes/`. To force-stop the daemon: `claudes daemon stop`. It'll respawn next time you run `claudes ls` (assuming sessions exist).
 
-## Sending input — important
+## Writing input — important
 
-`claudes send` is **literal by default**: `claudes send foo "Up"` types the two characters `U`,`p` and presses Enter. To send actual key presses (Escape to dismiss a dialog, arrows for history, Ctrl-C to interrupt), use `--keys`:
+`claudes write` is **literal by default**: `claudes write foo "Up"` types the two characters `U`,`p` and presses Enter. To send actual key presses (Escape to dismiss a dialog, arrows for history, Ctrl-C to interrupt), use `--keys`:
 
 ```
-claudes send --keys foo Escape         # dismiss a dialog
-claudes send --keys foo Up Up          # recall previous prompt (no submit)
-claudes send --keys foo C-c            # interrupt
+claudes write --keys foo Escape         # dismiss a dialog
+claudes write --keys foo Up Up          # recall previous prompt (no submit)
+claudes write --keys foo C-c            # interrupt
 ```
 
 Multi-line message: pass the text as one quoted arg with embedded newlines. The body is delivered to the pane as a single bracketed-paste block (via a tmux paste buffer), so the whole thing arrives as one prompt with one trailing Enter — no per-line submits, and no size ceiling beyond what tmux itself can hold.
 
 ## Reading output
 
-`claudes logs <name>` runs `tmux capture-pane` against the session's pane and prints what's on screen + recent scrollback. Increase scrollback with `-n 200`, or stream with `-f`. After sending a prompt, give Claude time to respond before capturing — typically `sleep 3-8s` for short replies, longer for tool-use turns.
+`claudes read <name>` runs `tmux capture-pane` against the session's pane and prints what's on screen + recent scrollback. Increase scrollback with `-n 200`, or stream with `-f`. After writing a prompt, give Claude time to respond before reading — typically `sleep 3-8s` for short replies, longer for tool-use turns.
 
 ## Typical workflows
 
 **Fire-and-forget a prompt to a running session:**
 ```
-claudes send my-session "summarize the last commit and write a one-line PR title"
+claudes write my-session "summarize the last commit and write a one-line PR title"
 sleep 6
-claudes logs my-session -n 40
+claudes read my-session -n 40
 ```
 
-**Spawn a new session in a project, send first prompt:**
+**Spawn a new session in a project, write the first prompt:**
 ```
 claudes new bug-fix-1 -d ~/Projects/whatever
 sleep 3   # let Claude Code finish booting
-claudes send bug-fix-1 "read the failing spec and propose a fix"
+claudes write bug-fix-1 "read the failing spec and propose a fix"
 ```
 
 **Dismiss a stuck dialog and resend:**
 ```
-claudes send --keys my-session Escape
-claudes send my-session "retry the request"
+claudes write --keys my-session Escape
+claudes write my-session "retry the request"
 ```
 
 ## Gotchas

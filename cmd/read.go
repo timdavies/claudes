@@ -21,9 +21,10 @@ var (
 )
 
 var logsCmd = &cobra.Command{
-	Use:   "logs [name]",
-	Short: "View recent output from a session",
-	Args:  cobra.MaximumNArgs(1),
+	Use:     "read [name]",
+	Aliases: []string{"logs"},
+	Short:   "Read recent output from a session",
+	Args:    cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cfg, err := loadConfig()
 		if err != nil {

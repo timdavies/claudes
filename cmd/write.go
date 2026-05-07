@@ -13,12 +13,15 @@ import (
 var sendKeysMode bool
 
 var sendCmd = &cobra.Command{
-	Use:   "send [name] <message|key...>",
-	Short: "Send a message to a session (or raw keys with --keys)",
-	Long: `Send a message to a session and press Enter.
+	Use:     "write [name] <message|key...>",
+	Aliases: []string{"send"},
+	Short:   "Write a message into a session (or raw keys with --keys)",
+	Long: `Write a message to a session and press Enter.
 
 With --keys, each remaining argument is passed to tmux as a key name (e.g.
-Escape, Up, C-c, BSpace) or literal token, and no Enter is appended.`,
+Escape, Up, C-c, BSpace) or literal token, and no Enter is appended.
+
+Aliased as "send" for backwards compatibility.`,
 	Args: cobra.MinimumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cfg, err := loadConfig()

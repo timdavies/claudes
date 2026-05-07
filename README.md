@@ -3,7 +3,7 @@
 a lightweight manager for your claude(s). tmux underneath.
 
 * like `screen` for `claude` — sessions keep running after you detach.
-* use `claudes logs` or `claudes send` to read/write without opening the session.
+* use `claudes read` or `claudes write` to read/write without opening the session.
 * or `claudes open` to hop in 🕳️🐇
 
 ## Quickstart
@@ -25,14 +25,14 @@ claudes ls
 claudes open api-1
 
 # Or drive it without attaching
-claudes send web-1 "run the tests and fix any failures"
-claudes logs web-1 -f
+claudes write web-1 "run the tests and fix any failures"
+claudes read web-1 -f
 
 # Done with it
 claudes stop api-1
 ```
 
-Run `claudes open` (or `stop`, `send`, `logs`) with no name and you'll get a picker.
+Run `claudes open` (or `stop`, `write`, `read`) with no name and you'll get a picker. `send` and `logs` are kept as aliases for `write` and `read`.
 
 ## Config
 
