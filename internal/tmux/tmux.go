@@ -115,6 +115,43 @@ func (c *Client) NewSession(name, dir string, extraEnv []string, cmdline []strin
 	return command.Run()
 }
 
+// SessionEnv returns the tmux session-level environment as a KEY→VALUE map.
+// Variables marked for removal (lines starting with `-`) are skipped.
+// Missing/empty session returns an empty map without error.
+func (c *Client) SessionEnv(name string) (map[string]string, error) {
+	out, err := c.cmd("show-environment", "-t", name).CombinedOutput()
+	if err != nil {
+		s := string(out)
+		if strings.Contains(s, "can't find session") ||
+			strings.Contains(s, "session not found") ||
+			strings.Contains(s, "no server running") {
+			return map[string]string{}, nil
+		}
+		return nil, fmt.Errorf("tmux show-environment: %w: %s", err, strings.TrimSpace(s))
+	}
+	env := map[string]string{}
+	for _, line := range strings.Split(strings.TrimRight(string(out), "\n"), "\n") {
+		if line == "" || strings.HasPrefix(line, "-") {
+			continue
+		}
+		k, v, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+		env[k] = v
+	}
+	return env, nil
+}
+
+// SetSessionEnv sets a single key=value in the session env.
+func (c *Client) SetSessionEnv(name, key, value string) error {
+	out, err := c.cmd("set-environment", "-t", name, key, value).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("tmux set-environment: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
 // Rename renames a session.
 func (c *Client) Rename(oldName, newName string) error {
 	out, err := c.cmd("rename-session", "-t", oldName, newName).CombinedOutput()

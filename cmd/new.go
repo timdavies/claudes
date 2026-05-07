@@ -102,7 +102,18 @@ var newCmd = &cobra.Command{
 		}
 		cmdline = append(cmdline, passthrough...)
 
-		if err := client.NewSession(full, resolved.Dir, nil, cmdline); err != nil {
+		// Stamp the session-level metadata. tmux passes -e KEY=VALUE on
+		// new-session into the session env, where show-environment reads it
+		// back. claudes ls uses these to populate Project/Model columns,
+		// which is more reliable than re-deriving from cwd or process args.
+		extraEnv := []string{
+			"CLAUDES_NAME=" + displayName,
+			"CLAUDES_PROJECT=" + resolved.Project,
+			"CLAUDES_MODEL=" + resolved.Model,
+			"CLAUDES_DIR=" + resolved.Dir,
+		}
+
+		if err := client.NewSession(full, resolved.Dir, extraEnv, cmdline); err != nil {
 			return err
 		}
 

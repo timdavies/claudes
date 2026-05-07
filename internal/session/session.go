@@ -21,12 +21,13 @@ const (
 )
 
 type Session struct {
-	Name    string // user-facing (without prefix)
-	Project string
-	Model   string
-	Dir     string
-	Status  Status
-	Raw     tmux.Info
+	Name        string // user-facing (without prefix)
+	Project     string
+	Model       string
+	Dir         string
+	Status      Status
+	Description string // ambient summary written by the daemon, may be empty
+	Raw         tmux.Info
 }
 
 // FullName returns the tmux session name (with configured prefix).
@@ -45,6 +46,12 @@ func DisplayName(prefix, name string) string {
 }
 
 // List enumerates claudes-managed sessions, enriched with project/status.
+//
+// For each session, we prefer values stamped into the tmux session env at
+// create time (`CLAUDES_PROJECT`, `CLAUDES_MODEL`, `@claudes-description`)
+// since they're durable and can't drift. Project and model fall back to
+// inference from cwd/process args for sessions created before the stamp
+// was added, or for sessions started via raw tmux outside of claudes new.
 func List(client *tmux.Client, cfg *config.Config) ([]Session, error) {
 	infos, err := client.List()
 	if err != nil {
@@ -55,14 +62,24 @@ func List(client *tmux.Client, cfg *config.Config) ([]Session, error) {
 		if !strings.HasPrefix(in.Name, cfg.Prefix) {
 			continue
 		}
+		env, _ := client.SessionEnv(in.Name) // best-effort
 		s := Session{
-			Name:   DisplayName(cfg.Prefix, in.Name),
-			Dir:    in.Path,
-			Status: classify(in),
-			Raw:    in,
+			Name:        DisplayName(cfg.Prefix, in.Name),
+			Dir:         in.Path,
+			Status:      classify(in),
+			Description: env["@claudes-description"],
+			Raw:         in,
 		}
-		s.Project = inferProject(in.Path, cfg)
-		s.Model = inferModel(in.PanePID, cfg)
+		if v := env["CLAUDES_PROJECT"]; v != "" {
+			s.Project = v
+		} else {
+			s.Project = inferProject(in.Path, cfg)
+		}
+		if v := env["CLAUDES_MODEL"]; v != "" {
+			s.Model = v
+		} else {
+			s.Model = inferModel(in.PanePID, cfg)
+		}
 		out = append(out, s)
 	}
 	return out, nil
