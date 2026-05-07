@@ -19,8 +19,10 @@ var (
 	newDir     string
 	newProject string
 	newAttach  bool
+	newModel   string
 	newSonnet  bool
 	newOpus    bool
+	newHaiku   bool
 )
 
 var newCmd = &cobra.Command{
@@ -56,10 +58,16 @@ var newCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		if newSonnet {
+		// Precedence: --model wins, then alias flags (--haiku/--sonnet/--opus),
+		// then resolved (project or config default).
+		switch {
+		case newModel != "":
+			resolved.Model = newModel
+		case newHaiku:
+			resolved.Model = resolved.Models["haiku"]
+		case newSonnet:
 			resolved.Model = resolved.Models["sonnet"]
-		}
-		if newOpus {
+		case newOpus:
 			resolved.Model = resolved.Models["opus"]
 		}
 
@@ -114,6 +122,8 @@ func init() {
 	newCmd.Flags().StringVarP(&newDir, "dir", "d", "", "Working directory")
 	newCmd.Flags().StringVar(&newProject, "project", "", "Project name from config")
 	newCmd.Flags().BoolVarP(&newAttach, "attach", "a", false, "Attach immediately")
+	newCmd.Flags().StringVar(&newModel, "model", "", "Model name (passes --model to claude)")
+	newCmd.Flags().BoolVar(&newHaiku, "haiku", false, "Use haiku model")
 	newCmd.Flags().BoolVar(&newSonnet, "sonnet", false, "Use sonnet model")
 	newCmd.Flags().BoolVar(&newOpus, "opus", false, "Use opus model")
 	rootCmd.AddCommand(newCmd)

@@ -56,7 +56,13 @@ func defaultConfig() Config {
 		StopTimeout: 10,
 		Prefix:      "claudes-",
 		TmuxSocket:  "claudes",
+		// Default to opus rather than empty so that claudes always passes
+		// --model to the spawned claude. Without this, a Haiku-running
+		// Claude Code spawning `claudes new` produces a Haiku session by
+		// inheritance — surprising and easy to miss.
+		Model: "opus",
 		Models: map[string]string{
+			"haiku":  "haiku",
 			"sonnet": "sonnet",
 			"opus":   "opus",
 		},

@@ -112,14 +112,21 @@ func inferProject(dir string, cfg *config.Config) string {
 	return ""
 }
 
-// inferModel reads the descendant `claude` process's args, looking for --model.
-// Best-effort; returns cfg.Model or "" on failure.
+// inferModel reads the pane's `claude` process args, looking for --model.
+// Tries pane_pid itself first (claudes spawns claude directly, so the pane
+// process IS claude); falls back to walking children for the unusual case
+// where a shell wraps the pane.
+//
+// Best-effort: returns cfg.Model on any failure.
 func inferModel(pid int, cfg *config.Config) string {
 	fallback := cfg.Model
 	if pid <= 0 {
 		return fallback
 	}
-	// `ps -o args= -p <pid>` — but pid is the shell; we want its child claude.
+	if m := modelFromPID(pid); m != "" {
+		return m
+	}
+	// Fallback: walk children. Useful if the pane is a shell that exec'd claude.
 	out, err := exec.Command("pgrep", "-P", strconv.Itoa(pid)).Output()
 	if err != nil {
 		return fallback
@@ -129,29 +136,39 @@ func inferModel(pid int, cfg *config.Config) string {
 		if err != nil {
 			continue
 		}
-		argsOut, err := exec.Command("ps", "-o", "args=", "-p", strconv.Itoa(child)).Output()
-		if err != nil {
-			continue
-		}
-		args := strings.TrimSpace(string(argsOut))
-		if !strings.Contains(args, "claude") {
-			continue
-		}
-		fields := strings.Fields(args)
-		for i, f := range fields {
-			if f == "--model" && i+1 < len(fields) {
-				return fields[i+1]
-			}
-			if strings.HasPrefix(f, "--model=") {
-				return strings.TrimPrefix(f, "--model=")
-			}
-			if f == "--sonnet" {
-				return "sonnet"
-			}
-			if f == "--opus" {
-				return "opus"
-			}
+		if m := modelFromPID(child); m != "" {
+			return m
 		}
 	}
 	return fallback
+}
+
+func modelFromPID(pid int) string {
+	argsOut, err := exec.Command("ps", "-o", "args=", "-p", strconv.Itoa(pid)).Output()
+	if err != nil {
+		return ""
+	}
+	args := strings.TrimSpace(string(argsOut))
+	if !strings.Contains(args, "claude") {
+		return ""
+	}
+	fields := strings.Fields(args)
+	for i, f := range fields {
+		if f == "--model" && i+1 < len(fields) {
+			return fields[i+1]
+		}
+		if strings.HasPrefix(f, "--model=") {
+			return strings.TrimPrefix(f, "--model=")
+		}
+		if f == "--haiku" {
+			return "haiku"
+		}
+		if f == "--sonnet" {
+			return "sonnet"
+		}
+		if f == "--opus" {
+			return "opus"
+		}
+	}
+	return ""
 }
