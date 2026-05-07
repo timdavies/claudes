@@ -19,7 +19,7 @@ For visual layout (windows, workspaces, panes, browsers, notifications), use the
 
 | Goal | Command |
 |------|---------|
-| List sessions | `claudes ls` |
+| List sessions (with descriptions) | `claudes ls` |
 | Create a session | `claudes new <name> -d <dir>` (omit name for picker; add `-- <claude-flags>` to pass through) |
 | Attach interactively | `claudes open <name>` |
 | Send a message + Enter | `claudes send <name> "<message>"` |
@@ -28,9 +28,18 @@ For visual layout (windows, workspaces, panes, browsers, notifications), use the
 | Rename a session | `claudes rename <old> <new>` (or `claudes rename <new>` for picker) |
 | Graceful stop | `claudes stop <name>` (sends `/exit`, waits, then kills) |
 | Force kill | `claudes kill <name>` (alias for `stop --force`) |
-| Model overrides | `claudes new ... --sonnet` / `--opus` |
+| Pick model | `claudes new ... --model <name>` (or `--haiku`/`--sonnet`/`--opus` shortcuts) |
+| Manage projects | `claudes project {list,add,rm,show}` |
+| Read/write top-level config | `claudes config {show,get,set}` |
+| Manage the daemon | `claudes daemon {status,start,stop,logs}` |
 
 Most commands accept no name and open an interactive picker.
+
+## Default model + auto-summarizing daemon
+
+`claudes` always passes `--model` to the spawned `claude` (default `opus`). Without this, a Haiku-running parent would silently produce Haiku sessions by inheritance. Override per-session via `--model X` or shortcuts.
+
+A background daemon auto-spawns on first `claudes new`/`open`/`ls` and self-exits when no sessions remain. Every minute (or `CLAUDES_DAEMON_TICK=15s` for dev) it captures each session's pane, hashes it, and asks `claude -p --model haiku` for an 8-12 word description. The result is written to the tmux session env (`@claudes-description`) and shown in `claudes ls`. State files live in `~/.cache/claudes/`. To force-stop the daemon: `claudes daemon stop`. It'll respawn next time you run `claudes ls` (assuming sessions exist).
 
 ## Sending input — important
 
@@ -80,4 +89,4 @@ claudes send my-session "retry the request"
 
 ## Config
 
-`~/.config/claudes/config.toml` controls prefix, default model, projects, hooks. `~/.config/claudes/tmux.conf` is the bundled tmux config applied to every claudes session via `tmux -f`. Hook scripts (`post_new`, `post_stop`) receive `CLAUDES_NAME`, `CLAUDES_PROJECT`, `CLAUDES_DIR`, `CLAUDES_MODEL` in env.
+`~/.config/claudes/config.toml` controls prefix, default model, projects, hooks. Editable via `claudes config set <key> <value>` (top-level scalars) and `claudes project add <name> --dir <path>` (project stanzas) — no need to hand-edit TOML. `claudes config show` prints the current effective config. `~/.config/claudes/tmux.conf` is the bundled tmux config applied to every claudes session via `tmux -f`. Hook scripts (`post_new`, `post_stop`) receive `CLAUDES_NAME`, `CLAUDES_PROJECT`, `CLAUDES_DIR`, `CLAUDES_MODEL` in env.
