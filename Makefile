@@ -11,14 +11,17 @@ ZSH_COMPDIR  ?= $(HOME)/.zsh/completions
 BASH_COMPDIR ?= $(HOME)/.local/share/bash-completion/completions
 FISH_COMPDIR ?= $(HOME)/.config/fish/completions
 
-.PHONY: all build install uninstall test vet fmt tidy clean run completions completion-zsh completion-bash completion-fish
+SKILLS_DIR ?= $(HOME)/.claude/skills
+SKILL_NAME ?= claudes
+
+.PHONY: all build install uninstall test vet fmt tidy clean run completions completion-zsh completion-bash completion-fish install-skill uninstall-skill
 
 all: build
 
 build:
 	$(GO) build -ldflags='$(LDFLAGS)' -o $(BINARY) .
 
-install: build
+install: build install-skill
 	@mkdir -p $(BINDIR) $(CONFDIR)
 	install -m 0755 $(BINARY) $(BINDIR)/$(BINARY)
 	@if [ -e $(CONFDIR)/tmux.conf ]; then \
@@ -31,9 +34,18 @@ install: build
 	@case ":$$PATH:" in *":$(BINDIR):"*) ;; \
 	  *) echo "note: $(BINDIR) is not in your PATH" ;; esac
 
-uninstall:
+install-skill:
+	@mkdir -p $(SKILLS_DIR)/$(SKILL_NAME)
+	install -m 0644 skill/SKILL.md $(SKILLS_DIR)/$(SKILL_NAME)/SKILL.md
+	@echo "installed $(SKILLS_DIR)/$(SKILL_NAME)/SKILL.md"
+
+uninstall: uninstall-skill
 	rm -f $(BINDIR)/$(BINARY)
 	@echo "left $(CONFDIR) intact (remove manually if you want)"
+
+uninstall-skill:
+	rm -rf $(SKILLS_DIR)/$(SKILL_NAME)
+	@echo "removed $(SKILLS_DIR)/$(SKILL_NAME)"
 
 test:
 	$(GO) test ./...
