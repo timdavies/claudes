@@ -42,6 +42,7 @@ var openCmd = &cobra.Command{
 			displayName = s.Name
 		}
 		full := session.FullName(cfg.Prefix, displayName)
+		ensureDaemonForCmd(false)
 		return client.Attach(full)
 	},
 }

@@ -117,6 +117,10 @@ var newCmd = &cobra.Command{
 			return err
 		}
 
+		// Spawn the summarizer daemon if it's not already running. We know
+		// at least one session exists now, so always-spawn.
+		ensureDaemonForCmd(true)
+
 		_ = hooks.Run("post_new", resolved.Hooks.PostNew,
 			hookEnv(displayName, resolved.Project, resolved.Dir, resolved.Model))
 

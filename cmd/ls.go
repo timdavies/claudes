@@ -51,11 +51,15 @@ func runLs(cmd *cobra.Command, args []string) error {
 		}
 		return nil
 	}
+	// Make sure the daemon is up so descriptions stay fresh on the next tick.
+	// No-op if it's already running. Best-effort.
+	ensureDaemonForCmd(false)
+
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "NAME\tPROJECT\tMODEL\tDIR\tSTATUS")
+	fmt.Fprintln(w, "NAME\tPROJECT\tMODEL\tSTATUS\tDESCRIPTION\tDIR")
 	for _, s := range sessions {
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n",
-			s.Name, dash(s.Project), dash(s.Model), s.Dir, s.Status)
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n",
+			s.Name, dash(s.Project), dash(s.Model), s.Status, dash(s.Description), s.Dir)
 	}
 	return w.Flush()
 }
