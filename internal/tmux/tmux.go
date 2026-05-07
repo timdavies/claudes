@@ -115,6 +115,15 @@ func (c *Client) NewSession(name, dir string, extraEnv []string, cmdline []strin
 	return command.Run()
 }
 
+// Rename renames a session.
+func (c *Client) Rename(oldName, newName string) error {
+	out, err := c.cmd("rename-session", "-t", oldName, newName).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("tmux rename-session: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
 // Kill removes a session immediately.
 func (c *Client) Kill(name string) error {
 	out, err := c.cmd("kill-session", "-t", name).CombinedOutput()
@@ -171,6 +180,20 @@ func (c *Client) SendKeys(name, text string) error {
 		}
 	}
 	out, err := c.cmd("send-keys", "-t", name, "Enter").CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("tmux send-keys: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+// SendRawKeys passes each arg to tmux send-keys as a key name (Up, C-c, Escape,
+// etc.) or literal token if no key name matches. No trailing Enter is added.
+func (c *Client) SendRawKeys(name string, keys []string) error {
+	if len(keys) == 0 {
+		return nil
+	}
+	args := append([]string{"send-keys", "-t", name}, keys...)
+	out, err := c.cmd(args...).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("tmux send-keys: %w: %s", err, strings.TrimSpace(string(out)))
 	}
