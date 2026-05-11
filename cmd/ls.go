@@ -16,10 +16,11 @@ import (
 var lsProject string
 
 var lsCmd = &cobra.Command{
-	Use:   "ls",
-	Short: "List managed sessions",
-	Args:  cobra.NoArgs,
-	RunE:  runLs,
+	Use:     "ls",
+	Aliases: []string{"list"},
+	Short:   "List managed sessions",
+	Args:    cobra.NoArgs,
+	RunE:    runLs,
 }
 
 func init() {
