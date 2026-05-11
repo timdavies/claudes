@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
@@ -121,6 +122,13 @@ var newCmd = &cobra.Command{
 		// at least one session exists now, so always-spawn.
 		ensureDaemonForCmd(true)
 
+		// Block until the pane shows Claude Code's prompt indicator. Returning
+		// before claude has finished booting causes anything that immediately
+		// follows (a `claudes write` from a script, or the daemon's first
+		// describe attempt) to type into a half-initialized TUI and lose input.
+		// Best-effort: on timeout, proceed anyway.
+		waitForReady(client, full, 30*time.Second)
+
 		_ = hooks.Run("post_new", resolved.Hooks.PostNew,
 			hookEnv(displayName, resolved.Project, resolved.Dir, resolved.Model))
 
@@ -142,6 +150,20 @@ func init() {
 	newCmd.Flags().BoolVar(&newSonnet, "sonnet", false, "Use sonnet model")
 	newCmd.Flags().BoolVar(&newOpus, "opus", false, "Use opus model")
 	rootCmd.AddCommand(newCmd)
+}
+
+// waitForReady polls the pane until Claude Code's prompt indicator (❯) shows
+// up — i.e. the TUI has finished booting and is accepting input. Returns
+// silently on timeout: the session still exists; callers proceed best-effort.
+func waitForReady(client *tmux.Client, full string, timeout time.Duration) {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		out, err := client.CapturePane(full, 30)
+		if err == nil && strings.Contains(out, "❯") {
+			return
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
 }
 
 // suggestName returns the next available "<base>-N" name. base is the project
