@@ -18,6 +18,7 @@ const (
 	StatusWaiting Status = "waiting"
 	StatusIdle    Status = "idle"
 	StatusStopped Status = "stopped"
+	StatusPaused  Status = "paused" // pinned agent whose tmux session is gone
 )
 
 type Session struct {
@@ -27,6 +28,7 @@ type Session struct {
 	Dir         string
 	Status      Status
 	Description string // ambient summary written by the daemon, may be empty
+	Pinned      bool
 	Raw         tmux.Info
 }
 
@@ -79,6 +81,9 @@ func List(client *tmux.Client, cfg *config.Config) ([]Session, error) {
 			s.Model = v
 		} else {
 			s.Model = inferModel(in.PanePID, cfg)
+		}
+		if env["@claudes-pinned"] == "true" {
+			s.Pinned = true
 		}
 		out = append(out, s)
 	}

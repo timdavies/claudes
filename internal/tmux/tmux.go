@@ -156,6 +156,15 @@ func (c *Client) SetSessionEnv(name, key, value string) error {
 	return nil
 }
 
+// UnsetSessionEnv removes a key from the session env.
+func (c *Client) UnsetSessionEnv(name, key string) error {
+	out, err := c.cmd("set-environment", "-u", "-t", name, key).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("tmux set-environment -u: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
 // Rename renames a session.
 func (c *Client) Rename(oldName, newName string) error {
 	out, err := c.cmd("rename-session", "-t", oldName, newName).CombinedOutput()

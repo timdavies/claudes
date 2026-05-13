@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bufio"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 
+	"github.com/timdavies/claudes/internal/config"
 	"github.com/timdavies/claudes/internal/hooks"
 	"github.com/timdavies/claudes/internal/session"
 	"github.com/timdavies/claudes/internal/tmux"
@@ -24,6 +26,7 @@ var (
 	newSonnet  bool
 	newOpus    bool
 	newHaiku   bool
+	newPin     bool
 )
 
 var newCmd = &cobra.Command{
@@ -95,54 +98,77 @@ var newCmd = &cobra.Command{
 		if has {
 			return fmt.Errorf("session %q already exists", displayName)
 		}
-
-		cmdline := []string{"claude"}
-		cmdline = append(cmdline, resolved.DefaultArgs...)
-		if resolved.Model != "" {
-			cmdline = append(cmdline, "--model", resolved.Model)
-		}
-		cmdline = append(cmdline, passthrough...)
-
-		// Stamp the session-level metadata. tmux passes -e KEY=VALUE on
-		// new-session into the session env, where show-environment reads it
-		// back. claudes ls uses these to populate Project/Model columns,
-		// which is more reliable than re-deriving from cwd or process args.
-		extraEnv := []string{
-			"CLAUDES_NAME=" + displayName,
-			"CLAUDES_PROJECT=" + resolved.Project,
-			"CLAUDES_MODEL=" + resolved.Model,
-			"CLAUDES_DIR=" + resolved.Dir,
+		// Refuse if a paused-pinned agent already owns this name; the user
+		// has to explicitly start or unpin it first.
+		pinReg, _ := pinnedRegistry()
+		if pinReg != nil && pinReg.Has(displayName) {
+			return fmt.Errorf("agent %q is pinned and paused; use 'claudes start %s' or 'claudes unpin %s'",
+				displayName, displayName, displayName)
 		}
 
-		if err := client.NewSession(full, resolved.Dir, extraEnv, cmdline); err != nil {
+		if err := spawnSession(client, cfg, resolved, displayName, passthrough); err != nil {
 			return err
 		}
 
-		// Spawn the summarizer daemon if it's not already running. We know
-		// at least one session exists now, so always-spawn.
-		ensureDaemonForCmd(true)
-
-		// Block until the pane shows Claude Code's prompt indicator. Returning
-		// before claude has finished booting causes anything that immediately
-		// follows (a `claudes write` from a script, or the daemon's first
-		// describe attempt) to type into a half-initialized TUI and lose input.
-		// Best-effort: on timeout, proceed anyway.
-		waitForReady(client, full, 30*time.Second)
-
-		// Open a macuake tab attached to this session, if the integration is
-		// enabled and reachable. Best-effort: never fails session creation.
-		maybeOpenMacuakeTab(cfg, full, displayName, resolved.Dir, client)
-
-		_ = hooks.Run("post_new", resolved.Hooks.PostNew,
-			hookEnv(displayName, resolved.Project, resolved.Dir, resolved.Model))
+		if newPin {
+			if err := pinLiveAgent(client, cfg, displayName, resolved, passthrough); err != nil {
+				fmt.Fprintf(os.Stderr, "claudes: pin: %v\n", err)
+			}
+		}
 
 		fmt.Println(displayName)
 
 		if newAttach {
-			return client.Attach(full)
+			return client.Attach(session.FullName(cfg.Prefix, displayName))
 		}
 		return nil
 	},
+}
+
+// spawnSession runs the full session-creation pipeline shared by `claudes new`
+// and `claudes start`: build cmdline → tmux new-session → daemon ensure →
+// wait for claude to boot → open macuake tab → post_new hook.
+func spawnSession(client *tmux.Client, cfg *config.Config, resolved config.Resolved,
+	displayName string, passthrough []string) error {
+	full := session.FullName(cfg.Prefix, displayName)
+
+	cmdline := []string{"claude"}
+	cmdline = append(cmdline, resolved.DefaultArgs...)
+	if resolved.Model != "" {
+		cmdline = append(cmdline, "--model", resolved.Model)
+	}
+	cmdline = append(cmdline, passthrough...)
+
+	// Stamp the session-level metadata. tmux passes -e KEY=VALUE on
+	// new-session into the session env, where show-environment reads it
+	// back. claudes ls uses these to populate Project/Model columns, and
+	// `claudes pin` reads DEFAULT_ARGS/PASSTHROUGH back so resurrecting
+	// the agent later runs with the same cmdline.
+	extraEnv := []string{
+		"CLAUDES_NAME=" + displayName,
+		"CLAUDES_PROJECT=" + resolved.Project,
+		"CLAUDES_MODEL=" + resolved.Model,
+		"CLAUDES_DIR=" + resolved.Dir,
+		"CLAUDES_DEFAULT_ARGS=" + mustJSON(resolved.DefaultArgs),
+		"CLAUDES_PASSTHROUGH=" + mustJSON(passthrough),
+	}
+
+	if err := client.NewSession(full, resolved.Dir, extraEnv, cmdline); err != nil {
+		return err
+	}
+
+	ensureDaemonForCmd(true)
+	waitForReady(client, full, 30*time.Second)
+	maybeOpenMacuakeTab(cfg, full, displayName, resolved.Dir, client)
+
+	_ = hooks.Run("post_new", resolved.Hooks.PostNew,
+		hookEnv(displayName, resolved.Project, resolved.Dir, resolved.Model))
+	return nil
+}
+
+func mustJSON(v any) string {
+	b, _ := json.Marshal(v)
+	return string(b)
 }
 
 func init() {
@@ -153,6 +179,7 @@ func init() {
 	newCmd.Flags().BoolVar(&newHaiku, "haiku", false, "Use haiku model")
 	newCmd.Flags().BoolVar(&newSonnet, "sonnet", false, "Use sonnet model")
 	newCmd.Flags().BoolVar(&newOpus, "opus", false, "Use opus model")
+	newCmd.Flags().BoolVar(&newPin, "pin", false, "Pin the agent — survives claude exit, resurrect with 'claudes start'")
 	rootCmd.AddCommand(newCmd)
 }
 
@@ -180,6 +207,12 @@ func suggestName(client *tmux.Client, prefix, project, dir string) (string, erro
 	used := map[string]bool{}
 	for _, i := range infos {
 		used[i.Name] = true
+	}
+	// Also avoid clashing with paused-pinned agents.
+	if pinReg, err := pinnedRegistry(); err == nil && pinReg != nil {
+		for name := range pinReg.All() {
+			used[prefix+name] = true
+		}
 	}
 	base := strings.TrimSpace(project)
 	if base == "" {
