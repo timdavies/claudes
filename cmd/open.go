@@ -29,6 +29,22 @@ var openCmd = &cobra.Command{
 			if err != nil {
 				return err
 			}
+			// Merge in paused pinned agents so the picker can resurrect them.
+			if reg, err := pinnedRegistry(); err == nil && reg != nil {
+				live := map[string]bool{}
+				for _, s := range sessions {
+					live[s.Name] = true
+				}
+				for name, e := range reg.All() {
+					if live[name] {
+						continue
+					}
+					sessions = append(sessions, session.Session{
+						Name: name, Project: e.Project, Model: e.Model, Dir: e.Dir,
+						Status: session.StatusPaused, Pinned: true,
+					})
+				}
+			}
 			if len(sessions) == 0 {
 				return fmt.Errorf("no sessions; try: claudes new")
 			}
@@ -42,6 +58,14 @@ var openCmd = &cobra.Command{
 			displayName = s.Name
 		}
 		full := session.FullName(cfg.Prefix, displayName)
+		// If the agent is paused-pinned, resurrect it transparently before attach.
+		if has, _ := client.Has(full); !has {
+			if reg, err := pinnedRegistry(); err == nil && reg.Has(displayName) {
+				if err := resurrectPin(client, cfg, displayName); err != nil {
+					return err
+				}
+			}
+		}
 		ensureDaemonForCmd(false)
 		return client.Attach(full)
 	},

@@ -9,6 +9,7 @@ import (
 	"github.com/timdavies/claudes/internal/config"
 	"github.com/timdavies/claudes/internal/picker"
 	"github.com/timdavies/claudes/internal/session"
+	"github.com/timdavies/claudes/internal/tmux"
 )
 
 var startCmd = &cobra.Command{
@@ -62,43 +63,55 @@ var startCmd = &cobra.Command{
 			name = chosen.Name
 		}
 
-		entry, ok := reg.Get(name)
-		if !ok {
-			return fmt.Errorf("no pinned agent named %q", name)
-		}
 		full := session.FullName(cfg.Prefix, name)
 		if has, _ := client.Has(full); has {
 			return fmt.Errorf("agent %q is already running", name)
 		}
-
-		resolved := config.Resolved{
-			Project:     entry.Project,
-			Dir:         entry.Dir,
-			Model:       entry.Model,
-			DefaultArgs: append([]string(nil), entry.DefaultArgs...),
-			Hooks:       cfg.Hooks,
-			StopTimeout: cfg.StopTimeout,
-			Prefix:      cfg.Prefix,
-			TmuxSocket:  cfg.TmuxSocket,
-			TmuxConfig:  cfg.TmuxConfig,
-			Models:      cfg.Models,
-		}
-		// If the project still exists in config, prefer its hooks (matches
-		// the same merge order as cfg.Resolve at session-create time).
-		if p, ok := cfg.Projects[entry.Project]; ok {
-			if p.Hooks.PostNew != "" || p.Hooks.PostStop != "" {
-				resolved.Hooks = p.Hooks
-			}
-		}
-
-		if err := spawnSession(client, cfg, resolved, name, entry.PassthroughArgs); err != nil {
+		if err := resurrectPin(client, cfg, name); err != nil {
 			return err
 		}
-		// Re-stamp the marker on the fresh tmux session.
-		_ = client.SetSessionEnv(full, "@claudes-pinned", "true")
 		fmt.Println(name)
 		return nil
 	},
+}
+
+// resurrectPin spawns a fresh tmux session for a paused pinned agent using
+// its saved metadata. Caller is responsible for the not-already-running check.
+// Re-stamps the @claudes-pinned marker so 'claudes ls' continues to show 📌.
+func resurrectPin(client *tmux.Client, cfg *config.Config, name string) error {
+	reg, err := pinnedRegistry()
+	if err != nil {
+		return err
+	}
+	entry, ok := reg.Get(name)
+	if !ok {
+		return fmt.Errorf("no pinned agent named %q", name)
+	}
+	resolved := config.Resolved{
+		Project:     entry.Project,
+		Dir:         entry.Dir,
+		Model:       entry.Model,
+		DefaultArgs: append([]string(nil), entry.DefaultArgs...),
+		Hooks:       cfg.Hooks,
+		StopTimeout: cfg.StopTimeout,
+		Prefix:      cfg.Prefix,
+		TmuxSocket:  cfg.TmuxSocket,
+		TmuxConfig:  cfg.TmuxConfig,
+		Models:      cfg.Models,
+	}
+	// If the project still exists in config, prefer its hooks (matches
+	// the same merge order as cfg.Resolve at session-create time).
+	if p, ok := cfg.Projects[entry.Project]; ok {
+		if p.Hooks.PostNew != "" || p.Hooks.PostStop != "" {
+			resolved.Hooks = p.Hooks
+		}
+	}
+	if err := spawnSession(client, cfg, resolved, name, entry.PassthroughArgs); err != nil {
+		return err
+	}
+	full := session.FullName(cfg.Prefix, name)
+	_ = client.SetSessionEnv(full, "@claudes-pinned", "true")
+	return nil
 }
 
 func init() {
