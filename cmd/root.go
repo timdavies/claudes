@@ -44,6 +44,11 @@ func loadConfig() (*config.Config, error) {
 	if flagNoInteractive {
 		os.Setenv("CLAUDES_NO_INTERACTIVE", "1")
 	}
+	// Propagate --config to subprocesses (e.g. the daemon) via env so they
+	// load the same settings without needing the flag forwarded explicitly.
+	if flagConfig != "" {
+		os.Setenv("CLAUDES_CONFIG", flagConfig)
+	}
 	return &cfg, nil
 }
 

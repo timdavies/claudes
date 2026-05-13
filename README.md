@@ -49,6 +49,18 @@ post_stop = "cd $CLAUDES_DIR && git worktree prune"
 
 When you're inside a project's `dir`, claudes detects it automatically and applies its settings. Sessions auto-name as `<project>-1`, `<project>-2`, …
 
+## macuake integration (macOS)
+
+Opt-in. When enabled, every `claudes new` opens a [macuake](https://macuake.com) tab attached to the tmux session; `claudes stop` (or the agent self-exiting) closes it.
+
+```toml
+[macuake]
+enabled = true
+# socket = "/tmp/macuake.sock"   # default; usually omit
+```
+
+Requires macuake's socket API to be turned on in its Settings. When the socket is unreachable, claudes logs one warning and continues without a tab — session creation never fails on macuake errors. The daemon's reconciler closes orphan tabs every 5s; override with `CLAUDES_MACUAKE_TICK=2s` etc.
+
 ## Bundled tmux config
 
 `make install` drops a default `tmux.conf` at `~/.config/claudes/tmux.conf` (used only by claudes-managed sessions, not your personal tmux):

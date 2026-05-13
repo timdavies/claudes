@@ -35,6 +35,7 @@ import (
 	"time"
 
 	"github.com/timdavies/claudes/internal/config"
+	"github.com/timdavies/claudes/internal/macuake"
 	"github.com/timdavies/claudes/internal/session"
 	"github.com/timdavies/claudes/internal/tmux"
 )
@@ -45,11 +46,14 @@ const (
 	logFilename       = "daemon.log"
 	hashesFilename    = "hashes.json"
 
-	defaultTickInterval = 60 * time.Second
-	captureLines        = 80
-	maxDescLen          = 200 // hard cap on Haiku's output, just in case
-	summaryModel        = "haiku"
-	summaryTimeout      = 30 * time.Second
+	defaultTickInterval        = 60 * time.Second
+	defaultMacuakeTickInterval = 5 * time.Second
+	captureLines               = 80
+	maxDescLen                 = 200 // hard cap on Haiku's output, just in case
+	summaryModel               = "haiku"
+	summaryTimeout             = 30 * time.Second
+
+	macuakeTabsFilename = "macuake-tabs.json"
 )
 
 // tickInterval honors CLAUDES_DAEMON_TICK (e.g. "5s", "30s") for development;
@@ -61,6 +65,18 @@ func tickInterval() time.Duration {
 		}
 	}
 	return defaultTickInterval
+}
+
+// macuakeTickInterval honors CLAUDES_MACUAKE_TICK. Faster than the main tick
+// (summarization is expensive; macuake reconciliation is a couple of cheap
+// tmux + socket calls), so tab cleanup feels snappy when an agent self-exits.
+func macuakeTickInterval() time.Duration {
+	if v := os.Getenv("CLAUDES_MACUAKE_TICK"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			return d
+		}
+	}
+	return defaultMacuakeTickInterval
 }
 
 // metaPrompt is the Haiku instruction. Kept short and prescriptive.
@@ -219,7 +235,35 @@ func Run(cfg *config.Config) error {
 	cache.load()
 
 	tick := tickInterval()
-	logf("daemon starting; pid=%d tick=%s", os.Getpid(), tick)
+	mTick := macuakeTickInterval()
+	var (
+		mClient *macuake.Client
+		mReg    *macuake.Registry
+	)
+	if cfg.Macuake.Enabled {
+		mClient = macuake.New(cfg.Macuake.Socket, 0)
+		mReg = macuake.NewRegistry(filepath.Join(dir, macuakeTabsFilename))
+		logf("daemon starting; pid=%d tick=%s macuake_tick=%s", os.Getpid(), tick, mTick)
+	} else {
+		logf("daemon starting; pid=%d tick=%s", os.Getpid(), tick)
+	}
+
+	// reconcile runs the macuake step alone — used by the fast ticker. Always
+	// safe to call (no-op when macuake disabled or session list fails).
+	reconcile := func() {
+		if mClient == nil {
+			return
+		}
+		sessions, err := session.List(client, cfg)
+		if err != nil {
+			return
+		}
+		live := map[string]bool{}
+		for _, s := range sessions {
+			live[s.Name] = true
+		}
+		macuake.Reconcile(mClient, mReg, live, logf)
+	}
 
 	for {
 		writeHeartbeat(dir)
@@ -230,6 +274,13 @@ func Run(cfg *config.Config) error {
 		if len(sessions) == 0 {
 			logf("no sessions, exiting")
 			return nil
+		}
+		if mClient != nil {
+			live := map[string]bool{}
+			for _, s := range sessions {
+				live[s.Name] = true
+			}
+			macuake.Reconcile(mClient, mReg, live, logf)
 		}
 		// Summarize each session that's changed since last tick.
 		for _, s := range sessions {
@@ -260,11 +311,21 @@ func Run(cfg *config.Config) error {
 		}
 		cache.save()
 
-		select {
-		case <-stopCh:
-			logf("daemon: SIGTERM received, exiting")
-			return nil
-		case <-time.After(tick):
+		// Wait for the next main tick, but service macuake reconciliation on
+		// the faster cadence in between so tab cleanup feels snappy when an
+		// agent self-exits.
+		mainDeadline := time.After(tick)
+		waiting := true
+		for waiting {
+			select {
+			case <-stopCh:
+				logf("daemon: SIGTERM received, exiting")
+				return nil
+			case <-mainDeadline:
+				waiting = false
+			case <-time.After(mTick):
+				reconcile()
+			}
 		}
 	}
 }

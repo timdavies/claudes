@@ -52,6 +52,7 @@ var renameCmd = &cobra.Command{
 		if err := client.Rename(oldFull, newFull); err != nil {
 			return err
 		}
+		maybeRenameMacuakeTab(cfg, target.Name, newName)
 		fmt.Println(newName)
 		return nil
 	},

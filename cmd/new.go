@@ -129,6 +129,10 @@ var newCmd = &cobra.Command{
 		// Best-effort: on timeout, proceed anyway.
 		waitForReady(client, full, 30*time.Second)
 
+		// Open a macuake tab attached to this session, if the integration is
+		// enabled and reachable. Best-effort: never fails session creation.
+		maybeOpenMacuakeTab(cfg, full, displayName, resolved.Dir, client)
+
 		_ = hooks.Run("post_new", resolved.Hooks.PostNew,
 			hookEnv(displayName, resolved.Project, resolved.Dir, resolved.Model))
 
