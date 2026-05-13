@@ -78,6 +78,8 @@ func runStop(args []string, force bool) error {
 		}
 	}
 
+	maybeCloseMacuakeTab(cfg, target.Name)
+
 	resolved, _ := cfg.Resolve("", "", target.Dir)
 	// Override resolved.Project with what we observed (may differ from cwd-based resolve)
 	if target.Project != "" {

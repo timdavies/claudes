@@ -21,6 +21,11 @@ type Project struct {
 	Hooks       Hooks    `toml:"hooks"`
 }
 
+type Macuake struct {
+	Enabled bool   `toml:"enabled"`
+	Socket  string `toml:"socket"`
+}
+
 type Config struct {
 	DefaultArgs    []string           `toml:"default_args"`
 	Model          string             `toml:"model"`
@@ -32,6 +37,7 @@ type Config struct {
 	Models         map[string]string  `toml:"models"`
 	Projects       map[string]Project `toml:"projects"`
 	Hooks          Hooks              `toml:"hooks"`
+	Macuake        Macuake            `toml:"macuake"`
 
 	Path string `toml:"-"`
 }
@@ -73,6 +79,11 @@ func defaultConfig() Config {
 func configPath(override string) (string, error) {
 	if override != "" {
 		return expand(override), nil
+	}
+	// CLAUDES_CONFIG lets the CLI propagate its --config flag to spawned
+	// subprocesses (e.g. the daemon) without rewiring every callsite.
+	if env := os.Getenv("CLAUDES_CONFIG"); env != "" {
+		return expand(env), nil
 	}
 	if x := os.Getenv("XDG_CONFIG_HOME"); x != "" {
 		return filepath.Join(x, "claudes", "config.toml"), nil
@@ -171,6 +182,14 @@ func mergeOver(base, over *Config) {
 	}
 	if over.Hooks.PostStop != "" {
 		base.Hooks.PostStop = over.Hooks.PostStop
+	}
+	// macuake is global-only: per-project override is YAGNI and would surprise
+	// users by silently turning off the integration in one project.
+	if over.Macuake.Enabled {
+		base.Macuake.Enabled = true
+	}
+	if over.Macuake.Socket != "" {
+		base.Macuake.Socket = over.Macuake.Socket
 	}
 }
 

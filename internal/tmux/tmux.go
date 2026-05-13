@@ -23,7 +23,11 @@ func New(socket, tmuxConfig string) *Client {
 	return &Client{Socket: socket, TmuxConfig: tmuxConfig}
 }
 
-func (c *Client) base() []string {
+// BaseArgs returns the leading tmux args (-L socket, -f config) that every
+// invocation prepends. Exported so callers can reconstruct an equivalent
+// tmux command line — e.g. the macuake integration sends
+// `tmux <base-args> attach-session -t <name>` into a new tab's shell.
+func (c *Client) BaseArgs() []string {
 	args := []string{}
 	if c.Socket != "" {
 		args = append(args, "-L", c.Socket)
@@ -35,7 +39,7 @@ func (c *Client) base() []string {
 }
 
 func (c *Client) cmd(args ...string) *exec.Cmd {
-	full := append(c.base(), args...)
+	full := append(c.BaseArgs(), args...)
 	return exec.Command("tmux", full...)
 }
 
@@ -259,7 +263,7 @@ func (c *Client) Attach(name string) error {
 	if err != nil {
 		return err
 	}
-	args := append([]string{"tmux"}, c.base()...)
+	args := append([]string{"tmux"}, c.BaseArgs()...)
 	args = append(args, "attach-session", "-t", name)
 	return syscall.Exec(tmuxBin, args, os.Environ())
 }
