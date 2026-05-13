@@ -49,10 +49,23 @@ var renameCmd = &cobra.Command{
 		if exists {
 			return fmt.Errorf("session %q already exists", newName)
 		}
-		if err := client.Rename(oldFull, newFull); err != nil {
-			return err
+		// Refuse if a paused-pinned agent already owns the new name.
+		if reg, err := pinnedRegistry(); err == nil && reg.Has(newName) {
+			return fmt.Errorf("pinned agent %q already exists", newName)
 		}
-		maybeRenameMacuakeTab(cfg, target.Name, newName)
+
+		// If the target has no live tmux session, it must be a paused pin —
+		// rename only the pinned entry, skip tmux and macuake.
+		hasLive, _ := client.Has(oldFull)
+		if hasLive {
+			if err := client.Rename(oldFull, newFull); err != nil {
+				return err
+			}
+			maybeRenameMacuakeTab(cfg, target.Name, newName)
+		}
+		if reg, err := pinnedRegistry(); err == nil {
+			_ = reg.Rename(target.Name, newName)
+		}
 		fmt.Println(newName)
 		return nil
 	},

@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 	"text/tabwriter"
 	"unicode/utf8"
@@ -38,6 +39,23 @@ func runLs(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	// Merge in paused pinned agents (those with no live tmux session).
+	if reg, err := pinnedRegistry(); err == nil && reg != nil {
+		live := map[string]bool{}
+		for _, s := range sessions {
+			live[s.Name] = true
+		}
+		for name, e := range reg.All() {
+			if live[name] {
+				continue
+			}
+			sessions = append(sessions, session.Session{
+				Name: name, Project: e.Project, Model: e.Model, Dir: e.Dir,
+				Status: session.StatusPaused, Pinned: true,
+			})
+		}
+	}
+	sort.Slice(sessions, func(i, j int) bool { return sessions[i].Name < sessions[j].Name })
 	if lsProject != "" {
 		filtered := sessions[:0]
 		for _, s := range sessions {
@@ -65,7 +83,7 @@ func runLs(cmd *cobra.Command, args []string) error {
 	fmt.Fprintln(w, "NAME\tPROJECT\tMODEL\tSTATUS\tDIR\tDESCRIPTION")
 	for _, s := range sessions {
 		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n",
-			s.Name,
+			displayName(s),
 			dash(s.Project),
 			dash(s.Model),
 			s.Status,
@@ -73,6 +91,14 @@ func runLs(cmd *cobra.Command, args []string) error {
 			dash(truncate(s.Description, descBudget)))
 	}
 	return w.Flush()
+}
+
+// displayName renders the NAME column, adding a trailing 📌 when pinned.
+func displayName(s session.Session) string {
+	if s.Pinned {
+		return s.Name + " 📌"
+	}
+	return s.Name
 }
 
 func dash(s string) string {
@@ -132,7 +158,7 @@ func descriptionBudget(ss []session.Session) int {
 	}
 	for _, s := range ss {
 		w := []int{
-			utf8.RuneCountInString(s.Name),
+			utf8.RuneCountInString(displayName(s)),
 			utf8.RuneCountInString(dash(s.Project)),
 			utf8.RuneCountInString(dash(s.Model)),
 			utf8.RuneCountInString(string(s.Status)),

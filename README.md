@@ -49,6 +49,19 @@ post_stop = "cd $CLAUDES_DIR && git worktree prune"
 
 When you're inside a project's `dir`, claudes detects it automatically and applies its settings. Sessions auto-name as `<project>-1`, `<project>-2`, …
 
+## Pinned agents
+
+```sh
+claudes new --pin foo      # create + pin
+claudes pin foo            # pin a live agent
+claudes unpin foo          # remove the pin
+claudes start foo          # resurrect a paused pinned agent
+```
+
+A **pinned** agent survives its claude process exiting (Ctrl+D, `/exit`, crash, or `claudes stop`). The tmux session goes away but the entry stays in `claudes ls` as `paused` with a 📌. `claudes start <name>` recreates the tmux session with the same model, project, dir, and cmdline as before. Unpinned (default) agents disappear when their session ends, same as always.
+
+State lives at `~/.cache/claudes/pinned.json` — safe to inspect or hand-edit.
+
 ## macuake integration (macOS)
 
 Opt-in. When enabled, every `claudes new` opens a [macuake](https://macuake.com) tab attached to the tmux session; `claudes stop` (or the agent self-exiting) closes it.
