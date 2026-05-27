@@ -19,8 +19,8 @@ var rootCmd = &cobra.Command{
 	Use:   "claudes",
 	Short: "Manage Claude Code sessions like screen.",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		// No subcommand → ls
-		return runLs(cmd, args)
+		// No subcommand → interactive TUI on a TTY, ls otherwise.
+		return rootRunInteractive(cmd, args)
 	},
 	SilenceUsage:  true,
 	SilenceErrors: true,
