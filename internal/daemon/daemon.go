@@ -330,28 +330,38 @@ func Run(cfg *config.Config) error {
 	}
 }
 
+// pidLock is the open pidfile fd held for the lifetime of the daemon process.
+// The flock(2) advisory lock on this fd is what makes exclusivity reliable —
+// the kernel releases it on process exit, so no defer/cleanup race can let a
+// second daemon mistake a live daemon's pidfile for stale. Keep the fd in a
+// package var so GC doesn't close it.
+var pidLock *os.File
+
 func acquirePid(dir string) error {
 	path := pidPath(dir)
-	// O_EXCL ensures only one daemon writes the pidfile per startup.
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o644)
 	if err != nil {
-		// If the file exists but the process is dead, take over. Otherwise lose.
-		if alive, _ := readPid(dir); alive {
-			return fmt.Errorf("another daemon is running")
-		}
-		_ = os.Remove(path)
-		f, err = os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
-		if err != nil {
-			return fmt.Errorf("create pidfile: %w", err)
-		}
+		return fmt.Errorf("open pidfile: %w", err)
 	}
-	defer f.Close()
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		f.Close()
+		return fmt.Errorf("another daemon is running")
+	}
+	if err := f.Truncate(0); err != nil {
+		f.Close()
+		return fmt.Errorf("truncate pidfile: %w", err)
+	}
+	if _, err := f.Seek(0, 0); err != nil {
+		f.Close()
+		return err
+	}
 	self, _ := os.Executable()
 	entry := pidEntry{PID: os.Getpid(), Path: self}
-	enc := json.NewEncoder(f)
-	if err := enc.Encode(entry); err != nil {
+	if err := json.NewEncoder(f).Encode(entry); err != nil {
+		f.Close()
 		return fmt.Errorf("write pidfile: %w", err)
 	}
+	pidLock = f
 	return nil
 }
 
