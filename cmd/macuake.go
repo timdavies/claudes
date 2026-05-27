@@ -18,7 +18,10 @@ import (
 // log-once-and-continue when macuake is enabled but the socket isn't
 // reachable. They must never fail the surrounding session operation.
 
-var unavailableOnce sync.Once
+var (
+	unavailableOnce  sync.Once
+	registryPermOnce sync.Once
+)
 
 func macuakeClient(cfg *config.Config) *macuake.Client {
 	if !cfg.Macuake.Enabled {
@@ -45,6 +48,17 @@ func logUnavailable() {
 }
 
 func logMacuakeErr(action string, err error) {
+	// The registry lives in ~/.cache/claudes, which may be outside the
+	// sandbox writable set when claudes is invoked from inside another
+	// Claude Code session. The tab itself is already open (over the
+	// macuake socket); only persistence to the registry fails. Degrade
+	// to a once-only stderr line instead of one-per-spawn noise.
+	if os.IsPermission(err) {
+		registryPermOnce.Do(func() {
+			fmt.Fprintln(os.Stderr, "claudes: macuake registry not writable (sandbox?); tab opened but won't be tracked")
+		})
+		return
+	}
 	fmt.Fprintf(os.Stderr, "claudes: macuake %s: %v\n", action, err)
 }
 
