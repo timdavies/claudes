@@ -62,17 +62,37 @@ A **pinned** agent survives its claude process exiting (Ctrl+D, `/exit`, crash, 
 
 State lives at `~/.cache/claudes/pinned.json` — safe to inspect or hand-edit.
 
-## macuake integration (macOS)
+## Terminal-tab integration (macOS)
 
-Opt-in. When enabled, every `claudes new` opens a [macuake](https://macuake.com) tab attached to the tmux session; `claudes stop` (or the agent self-exiting) closes it.
+Opt-in. When enabled, every `claudes new` opens a real terminal tab attached to the tmux session, titled with the session name; `claudes stop` (or the agent self-exiting) closes it, and the TUI's Enter focuses it. Pick a backend:
 
 ```toml
+[tabs]
+backend = "iterm2"   # or "macuake", or "" (off)
+```
+
+`claudes tabs sync` opens a tab for any running session that's missing one. When the backend is unreachable, claudes logs one warning and continues without a tab — session creation never fails on tab errors. The daemon's reconciler closes orphan tabs every 5s; override with `CLAUDES_MACUAKE_TICK=2s` etc.
+
+### iTerm2
+
+`backend = "iterm2"` drives iTerm2 via AppleScript (`osascript`) — no extra setup beyond two one-time grants:
+
+- **Automation:** the first `claudes new` triggers a macOS prompt to let claudes control iTerm2. Approve it (or System Settings ▸ Privacy & Security ▸ Automation). The daemon is the same binary, so it inherits the grant. If denied, claudes logs one line and continues tab-less.
+- **Profile ▸ Session ▸ "Prompt before closing" → No** (or "Only if there are jobs…"). Otherwise a stray `close` can block on a confirmation dialog. In normal use the tab self-closes when its tmux session dies, so this only matters for the cleanup fallback.
+
+### macuake
+
+`backend = "macuake"` talks to [macuake](https://macuake.com)'s socket API (turn it on in macuake's Settings):
+
+```toml
+[tabs]
+backend = "macuake"
+
 [macuake]
-enabled = true
 # socket = "/tmp/macuake.sock"   # default; usually omit
 ```
 
-Requires macuake's socket API to be turned on in its Settings. When the socket is unreachable, claudes logs one warning and continues without a tab — session creation never fails on macuake errors. The daemon's reconciler closes orphan tabs every 5s; override with `CLAUDES_MACUAKE_TICK=2s` etc.
+Legacy `[macuake] enabled = true` (without `[tabs] backend`) still selects the macuake backend.
 
 ## Bundled tmux config
 

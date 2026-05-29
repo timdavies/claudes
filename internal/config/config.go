@@ -26,6 +26,13 @@ type Macuake struct {
 	Socket  string `toml:"socket"`
 }
 
+// Tabs selects the terminal-tab integration backend: "iterm2", "macuake", or ""
+// (off). When unset, the legacy [macuake] enabled flag is honored as a fallback
+// (see Config.TabBackend).
+type Tabs struct {
+	Backend string `toml:"backend"`
+}
+
 type Config struct {
 	DefaultArgs    []string           `toml:"default_args"`
 	Model          string             `toml:"model"`
@@ -38,8 +45,22 @@ type Config struct {
 	Projects       map[string]Project `toml:"projects"`
 	Hooks          Hooks              `toml:"hooks"`
 	Macuake        Macuake            `toml:"macuake"`
+	Tabs           Tabs               `toml:"tabs"`
 
 	Path string `toml:"-"`
+}
+
+// TabBackend returns the active tab-integration backend: "iterm2", "macuake", or
+// "" (off). The [tabs] backend selector wins; absent that, a legacy [macuake]
+// enabled=true maps to "macuake" so existing configs keep working.
+func (c *Config) TabBackend() string {
+	if c.Tabs.Backend != "" {
+		return c.Tabs.Backend
+	}
+	if c.Macuake.Enabled {
+		return "macuake"
+	}
+	return ""
 }
 
 // Resolved is the merged settings for a single command invocation.
@@ -190,6 +211,9 @@ func mergeOver(base, over *Config) {
 	}
 	if over.Macuake.Socket != "" {
 		base.Macuake.Socket = over.Macuake.Socket
+	}
+	if over.Tabs.Backend != "" {
+		base.Tabs.Backend = over.Tabs.Backend
 	}
 }
 

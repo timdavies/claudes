@@ -13,7 +13,6 @@ import (
 	"golang.org/x/term"
 
 	"github.com/timdavies/claudes/internal/config"
-	"github.com/timdavies/claudes/internal/macuake"
 	"github.com/timdavies/claudes/internal/session"
 	"github.com/timdavies/claudes/internal/tmux"
 )
@@ -137,7 +136,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// activate handles Enter: focus the macuake tab, or fall back to tmux attach.
+// activate handles Enter: focus the session's tab, or fall back to tmux attach.
 func (m tuiModel) activate() (tea.Model, tea.Cmd) {
 	if len(m.rows) == 0 {
 		return m, nil
@@ -147,26 +146,27 @@ func (m tuiModel) activate() (tea.Model, tea.Cmd) {
 		m.status = fmt.Sprintf("%s is paused — `claudes start %s` to resurrect", r.Name, r.Name)
 		return m, nil
 	}
-	mc := macuakeClient(m.cfg)
-	if mc != nil {
-		if sid := resolveMacuakeTab(mc, r); sid != "" {
+	mc, ok := tabClientFor(m.cfg)
+	if ok {
+		reg, _ := tabRegistryFor(m.cfg)
+		if sid := resolveTab(mc, reg, r); sid != "" {
 			if err := mc.Focus(sid); err == nil {
 				m.status = "focused " + r.Name
 				m.rows = loadTUIRows(m.client, m.cfg)
 				return m, nil
-			} else if !macuake.IsNotFound(err) {
+			} else if !mc.IsNotFound(err) {
 				m.status = "focus failed: " + err.Error()
 				return m, nil
 			}
 			// Tab vanished between resolve and focus; fall through.
 		}
 		full := session.FullName(m.cfg.Prefix, r.Name)
-		maybeOpenMacuakeTab(m.cfg, full, r.Name, r.Dir, m.client)
+		maybeOpenTab(m.cfg, full, r.Name, r.Dir, m.client)
 		m.rows = loadTUIRows(m.client, m.cfg)
 		m.status = "opened tab for " + r.Name
 		return m, nil
 	}
-	// Macuake disabled: quit and attach directly.
+	// Tab integration disabled: quit and attach directly.
 	m.exitAction = exitAttach
 	m.exitName = r.Name
 	return m, tea.Quit
@@ -273,26 +273,28 @@ func visibleWidth(s string) int {
 	return len([]rune(out))
 }
 
-// resolveMacuakeTab finds the macuake tab for r, falling back through:
+// resolveTab finds the backend tab for r, falling back through:
 //  1. the registry's session_id (if HasTab) — verified live via mc.List;
-//  2. a live tab whose Title matches r.Name (set by SetAppearance on open).
+//  2. a live tab whose Title matches r.Name (set by SetAppearance + tmux's
+//     set-titles on open).
 //
-// If a live match is found, the registry is updated to point at it so the
-// next Enter is a single Focus call. Returns "" when nothing matches.
-func resolveMacuakeTab(mc *macuake.Client, r tuiRow) string {
+// If a live match is found, the registry is updated to point at it so the next
+// Enter is a single Focus call. Returns "" when nothing matches. The title match
+// is tolerant (substring) because iTerm2 may wrap the name in profile job/host
+// templating.
+func resolveTab(mc tabClient, reg tabRegistry, r tuiRow) string {
 	tabs, err := mc.List()
 	if err != nil {
 		// Fall back to whatever the registry said — Focus will fail
 		// cleanly with IsNotFound if it's stale.
 		return r.TabSID
 	}
-	live := map[string]string{} // session_id → title
+	have := map[string]bool{} // live session_ids
 	for _, t := range tabs {
-		live[t.SessionID] = t.Title
+		have[t.SessionID] = true
 	}
-	reg, _ := macuakeRegistry()
 	if r.HasTab {
-		if _, ok := live[r.TabSID]; ok {
+		if have[r.TabSID] {
 			return r.TabSID
 		}
 		// Registry entry stale — drop it.
@@ -300,9 +302,8 @@ func resolveMacuakeTab(mc *macuake.Client, r tuiRow) string {
 			_ = reg.Delete(r.Name)
 		}
 	}
-	// Title match: SetAppearance is called with displayName at open time.
 	for _, t := range tabs {
-		if t.Title == r.Name && t.SessionID != "" {
+		if t.SessionID != "" && titleMatches(t.Title, r.Name) {
 			if reg != nil {
 				_ = reg.Set(r.Name, t.SessionID)
 			}
@@ -312,7 +313,13 @@ func resolveMacuakeTab(mc *macuake.Client, r tuiRow) string {
 	return ""
 }
 
-// loadTUIRows builds the row list from tmux + pin registry + macuake registry.
+// titleMatches reports whether a tab title corresponds to the session name.
+// Exact match preferred; substring covers iTerm2 names like "name (job)".
+func titleMatches(title, name string) bool {
+	return title == name || (name != "" && strings.Contains(title, name))
+}
+
+// loadTUIRows builds the row list from tmux + pin registry + tab registry.
 func loadTUIRows(client *tmux.Client, cfg *config.Config) []tuiRow {
 	sessions, err := session.List(client, cfg)
 	if err != nil {
@@ -336,7 +343,7 @@ func loadTUIRows(client *tmux.Client, cfg *config.Config) []tuiRow {
 	sort.Slice(sessions, func(i, j int) bool { return sessions[i].Name < sessions[j].Name })
 
 	tabs := map[string]string{}
-	if reg, err := macuakeRegistry(); err == nil && reg != nil {
+	if reg, err := tabRegistryFor(cfg); err == nil && reg != nil {
 		for name, t := range reg.All() {
 			tabs[name] = t.SessionID
 		}

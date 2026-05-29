@@ -8,48 +8,65 @@ import (
 	"github.com/timdavies/claudes/internal/session"
 )
 
-var macuakeCmd = &cobra.Command{
-	Use:   "macuake",
-	Short: "Manage the macuake terminal integration",
+var tabsCmd = &cobra.Command{
+	Use:   "tabs",
+	Short: "Manage the terminal-tab integration (iterm2 / macuake)",
 }
 
-var macuakeSyncCmd = &cobra.Command{
+var tabsSyncCmd = &cobra.Command{
 	Use:   "sync",
-	Short: "Open a macuake tab for every running session that doesn't have one",
+	Short: "Open a tab for every running session that doesn't have one",
 	Args:  cobra.NoArgs,
-	RunE:  runMacuakeSync,
+	RunE:  runTabsSync,
+}
+
+// macuakeCmd is the legacy `claudes macuake …` namespace, kept as a hidden alias
+// for `claudes tabs …` so existing muscle memory / scripts keep working.
+var macuakeCmd = &cobra.Command{
+	Use:    "macuake",
+	Short:  "Deprecated alias for `tabs`",
+	Hidden: true,
 }
 
 func init() {
-	macuakeCmd.AddCommand(macuakeSyncCmd)
+	tabsCmd.AddCommand(tabsSyncCmd)
+	rootCmd.AddCommand(tabsCmd)
+
+	macuakeSync := *tabsSyncCmd
+	macuakeCmd.AddCommand(&macuakeSync)
 	rootCmd.AddCommand(macuakeCmd)
 }
 
-func runMacuakeSync(_ *cobra.Command, _ []string) error {
+func runTabsSync(_ *cobra.Command, _ []string) error {
 	cfg, err := loadConfig()
 	if err != nil {
 		return err
 	}
-	if !cfg.Macuake.Enabled {
-		return fmt.Errorf("macuake integration is disabled (set [macuake] enabled = true)")
+	if cfg.TabBackend() == "" {
+		return fmt.Errorf("tab integration is disabled (set [tabs] backend = \"iterm2\" or \"macuake\")")
 	}
 	client := newClient(cfg)
 	sessions, err := session.List(client, cfg)
 	if err != nil {
 		return err
 	}
-	reg, err := macuakeRegistry()
+	reg, err := tabRegistryFor(cfg)
 	if err != nil {
 		return err
 	}
-	existing := reg.All()
+	existing := map[string]bool{}
+	if reg != nil {
+		for name := range reg.All() {
+			existing[name] = true
+		}
+	}
 	opened := 0
 	for _, s := range sessions {
-		if _, ok := existing[s.Name]; ok {
+		if existing[s.Name] {
 			continue
 		}
 		full := session.FullName(cfg.Prefix, s.Name)
-		maybeOpenMacuakeTab(cfg, full, s.Name, s.Dir, client)
+		maybeOpenTab(cfg, full, s.Name, s.Dir, client)
 		fmt.Println(s.Name)
 		opened++
 	}
