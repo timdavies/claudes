@@ -159,7 +159,7 @@ func spawnSession(client *tmux.Client, cfg *config.Config, resolved config.Resol
 
 	ensureDaemonForCmd(true)
 	waitForReady(client, full, 30*time.Second)
-	maybeOpenMacuakeTab(cfg, full, displayName, resolved.Dir, client)
+	maybeOpenTab(cfg, full, displayName, resolved.Dir, client)
 
 	_ = hooks.Run("post_new", resolved.Hooks.PostNew,
 		hookEnv(displayName, resolved.Project, resolved.Dir, resolved.Model))

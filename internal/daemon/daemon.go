@@ -35,6 +35,7 @@ import (
 	"time"
 
 	"github.com/timdavies/claudes/internal/config"
+	"github.com/timdavies/claudes/internal/iterm2"
 	"github.com/timdavies/claudes/internal/macuake"
 	"github.com/timdavies/claudes/internal/session"
 	"github.com/timdavies/claudes/internal/tmux"
@@ -54,6 +55,7 @@ const (
 	summaryTimeout             = 30 * time.Second
 
 	macuakeTabsFilename = "macuake-tabs.json"
+	itermTabsFilename   = "iterm2-tabs.json"
 )
 
 // tickInterval honors CLAUDES_DAEMON_TICK (e.g. "5s", "30s") for development;
@@ -236,22 +238,30 @@ func Run(cfg *config.Config) error {
 
 	tick := tickInterval()
 	mTick := macuakeTickInterval()
-	var (
-		mClient *macuake.Client
-		mReg    *macuake.Registry
-	)
-	if cfg.Macuake.Enabled {
-		mClient = macuake.New(cfg.Macuake.Socket, 0)
-		mReg = macuake.NewRegistry(filepath.Join(dir, macuakeTabsFilename))
-		logf("daemon starting; pid=%d tick=%s macuake_tick=%s", os.Getpid(), tick, mTick)
-	} else {
+
+	// tabReconcile closes orphaned tabs for the selected backend. nil when no
+	// tab integration is configured. Both backends expose the same Reconcile
+	// shape but with distinct concrete types, so we bind one closure here.
+	var tabReconcile func(live map[string]bool)
+	switch cfg.TabBackend() {
+	case "macuake":
+		mc := macuake.New(cfg.Macuake.Socket, 0)
+		reg := macuake.NewRegistry(filepath.Join(dir, macuakeTabsFilename))
+		tabReconcile = func(live map[string]bool) { macuake.Reconcile(mc, reg, live, logf) }
+		logf("daemon starting; pid=%d tick=%s tab_tick=%s backend=macuake", os.Getpid(), tick, mTick)
+	case "iterm2":
+		ic := iterm2.New(0)
+		reg := iterm2.NewRegistry(filepath.Join(dir, itermTabsFilename))
+		tabReconcile = func(live map[string]bool) { iterm2.Reconcile(ic, reg, live, logf) }
+		logf("daemon starting; pid=%d tick=%s tab_tick=%s backend=iterm2", os.Getpid(), tick, mTick)
+	default:
 		logf("daemon starting; pid=%d tick=%s", os.Getpid(), tick)
 	}
 
-	// reconcile runs the macuake step alone — used by the fast ticker. Always
-	// safe to call (no-op when macuake disabled or session list fails).
+	// reconcile runs the tab step alone — used by the fast ticker. Always safe
+	// to call (no-op when no backend or session list fails).
 	reconcile := func() {
-		if mClient == nil {
+		if tabReconcile == nil {
 			return
 		}
 		sessions, err := session.List(client, cfg)
@@ -262,7 +272,7 @@ func Run(cfg *config.Config) error {
 		for _, s := range sessions {
 			live[s.Name] = true
 		}
-		macuake.Reconcile(mClient, mReg, live, logf)
+		tabReconcile(live)
 	}
 
 	for {
@@ -275,12 +285,12 @@ func Run(cfg *config.Config) error {
 			logf("no sessions, exiting")
 			return nil
 		}
-		if mClient != nil {
+		if tabReconcile != nil {
 			live := map[string]bool{}
 			for _, s := range sessions {
 				live[s.Name] = true
 			}
-			macuake.Reconcile(mClient, mReg, live, logf)
+			tabReconcile(live)
 		}
 		// Summarize each session that's changed since last tick.
 		for _, s := range sessions {

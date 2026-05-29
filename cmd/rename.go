@@ -55,13 +55,13 @@ var renameCmd = &cobra.Command{
 		}
 
 		// If the target has no live tmux session, it must be a paused pin —
-		// rename only the pinned entry, skip tmux and macuake.
+		// rename only the pinned entry, skip tmux and the tab integration.
 		hasLive, _ := client.Has(oldFull)
 		if hasLive {
 			if err := client.Rename(oldFull, newFull); err != nil {
 				return err
 			}
-			maybeRenameMacuakeTab(cfg, target.Name, newName)
+			maybeRenameTab(cfg, target.Name, newName)
 		}
 		if reg, err := pinnedRegistry(); err == nil {
 			_ = reg.Rename(target.Name, newName)
