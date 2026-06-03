@@ -11,8 +11,7 @@ import (
 
 // Registry persists the claudes-session → iTerm2-session mapping. Both CLI
 // commands (new/stop/rename) and the daemon reconciler read+write it, so
-// load/save is gated by an OS flock on the file. (Standalone copy of the
-// macuake registry — the two integrations are deliberately independent.)
+// load/save is gated by an OS flock on the file.
 type Registry struct {
 	Path string
 	mu   sync.Mutex

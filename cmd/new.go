@@ -127,7 +127,7 @@ var newCmd = &cobra.Command{
 
 // spawnSession runs the full session-creation pipeline shared by `claudes new`
 // and `claudes start`: build cmdline → tmux new-session → daemon ensure →
-// wait for claude to boot → open macuake tab → post_new hook.
+// wait for claude to boot → open terminal tab → post_new hook.
 func spawnSession(client *tmux.Client, cfg *config.Config, resolved config.Resolved,
 	displayName string, passthrough []string) error {
 	full := session.FullName(cfg.Prefix, displayName)

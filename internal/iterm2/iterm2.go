@@ -1,8 +1,7 @@
 // Package iterm2 is a thin client that drives iTerm2 over AppleScript.
 //
-// It mirrors the macuake client's surface (NewTab/CloseSession/Focus/
-// SetAppearance/Execute/List) so the cmd layer can route to either backend, but
-// it is deliberately standalone — no shared abstraction with macuake.
+// It exposes the tab-client surface the cmd layer routes through
+// (NewTab/CloseSession/Focus/SetAppearance/Execute/List).
 //
 // Every operation shells out to `osascript`, feeding the script on stdin to
 // dodge `-e` quoting. Each script is prefixed with an `application "iTerm2" is
@@ -43,8 +42,8 @@ type Client struct {
 	Timeout time.Duration
 }
 
-// TabInfo mirrors macuake's list-entry shape. CWD is always "" — iTerm2's
-// AppleScript dictionary has no cwd property, and no caller needs it.
+// TabInfo is the list-entry shape. CWD is always "" — iTerm2's AppleScript
+// dictionary has no cwd property, and no caller needs it.
 type TabInfo struct {
 	Index     int
 	SessionID string

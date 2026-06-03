@@ -25,7 +25,7 @@ func New(socket, tmuxConfig string) *Client {
 
 // BaseArgs returns the leading tmux args (-L socket, -f config) that every
 // invocation prepends. Exported so callers can reconstruct an equivalent
-// tmux command line — e.g. the macuake integration sends
+// tmux command line — e.g. the tab integration sends
 // `tmux <base-args> attach-session -t <name>` into a new tab's shell.
 func (c *Client) BaseArgs() []string {
 	args := []string{}

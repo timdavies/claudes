@@ -7,7 +7,7 @@ import (
 // Reconcile closes iTerm2 tabs for any registered display-name not present in
 // liveNames, then drops the entry. Idempotent — safe to call on every tick.
 //
-// Unlike macuake, the close here is prune-first / best-effort: because the tab
+// The close here is prune-first / best-effort: because the tab
 // runs an exec'd `tmux attach`, when the tmux session dies iTerm2 reaps the
 // session on its own (profile default "When a session ends → Close"). So the
 // daemon's real job is registry hygiene; an Apple-event denial (ErrPermission)

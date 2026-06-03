@@ -10,7 +10,7 @@ import (
 
 var tabsCmd = &cobra.Command{
 	Use:   "tabs",
-	Short: "Manage the terminal-tab integration (iterm2 / macuake)",
+	Short: "Manage the terminal-tab integration (iterm2)",
 }
 
 var tabsSyncCmd = &cobra.Command{
@@ -20,21 +20,9 @@ var tabsSyncCmd = &cobra.Command{
 	RunE:  runTabsSync,
 }
 
-// macuakeCmd is the legacy `claudes macuake …` namespace, kept as a hidden alias
-// for `claudes tabs …` so existing muscle memory / scripts keep working.
-var macuakeCmd = &cobra.Command{
-	Use:    "macuake",
-	Short:  "Deprecated alias for `tabs`",
-	Hidden: true,
-}
-
 func init() {
 	tabsCmd.AddCommand(tabsSyncCmd)
 	rootCmd.AddCommand(tabsCmd)
-
-	macuakeSync := *tabsSyncCmd
-	macuakeCmd.AddCommand(&macuakeSync)
-	rootCmd.AddCommand(macuakeCmd)
 }
 
 func runTabsSync(_ *cobra.Command, _ []string) error {
@@ -43,7 +31,7 @@ func runTabsSync(_ *cobra.Command, _ []string) error {
 		return err
 	}
 	if cfg.TabBackend() == "" {
-		return fmt.Errorf("tab integration is disabled (set [tabs] backend = \"iterm2\" or \"macuake\")")
+		return fmt.Errorf("tab integration is disabled (set [tabs] backend = \"iterm2\")")
 	}
 	client := newClient(cfg)
 	sessions, err := session.List(client, cfg)

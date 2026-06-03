@@ -9,15 +9,13 @@ import (
 
 	"github.com/timdavies/claudes/internal/config"
 	"github.com/timdavies/claudes/internal/iterm2"
-	"github.com/timdavies/claudes/internal/macuake"
 	"github.com/timdavies/claudes/internal/tmux"
 )
 
-// The tab integration gives every session a real, focusable terminal tab. Two
-// backends implement it — macuake (a Unix socket) and iTerm2 (AppleScript) —
-// and the user selects one via [tabs] backend. The packages are standalone with
-// their own types; this file is the thin routing seam that lets the rest of the
-// CLI stay backend-agnostic.
+// The tab integration gives every session a real, focusable terminal tab. iTerm2
+// (via AppleScript) is the backend, enabled with [tabs] backend = "iterm2". The
+// iterm2 package is standalone with its own types; this file is the thin routing
+// seam that lets the rest of the CLI stay backend-agnostic.
 //
 // All helpers are no-ops when no backend is selected, and log-once-and-continue
 // when a backend is selected but unreachable. They must never fail the
@@ -57,8 +55,6 @@ type tabRegistry interface {
 // tabClientFor returns the selected backend's client, ok=false when off.
 func tabClientFor(cfg *config.Config) (tabClient, bool) {
 	switch cfg.TabBackend() {
-	case "macuake":
-		return macuakeTabClient{macuake.New(cfg.Macuake.Socket, 0)}, true
 	case "iterm2":
 		return iterm2TabClient{iterm2.New(0)}, true
 	default:
@@ -69,12 +65,6 @@ func tabClientFor(cfg *config.Config) (tabClient, bool) {
 // tabRegistryFor returns the selected backend's registry, nil when off.
 func tabRegistryFor(cfg *config.Config) (tabRegistry, error) {
 	switch cfg.TabBackend() {
-	case "macuake":
-		r, err := macuakeRegistry()
-		if err != nil {
-			return nil, err
-		}
-		return macuakeTabRegistry{r}, nil
 	case "iterm2":
 		r, err := iterm2Registry()
 		if err != nil {
@@ -84,48 +74,6 @@ func tabRegistryFor(cfg *config.Config) (tabRegistry, error) {
 	default:
 		return nil, nil
 	}
-}
-
-// --- macuake adapters ---
-
-type macuakeTabClient struct{ c *macuake.Client }
-
-func (m macuakeTabClient) NewTab(dir string) (string, error)    { return m.c.NewTab(dir) }
-func (m macuakeTabClient) CloseSession(id string) error         { return m.c.CloseSession(id) }
-func (m macuakeTabClient) Focus(id string) error                { return m.c.Focus(id) }
-func (m macuakeTabClient) SetAppearance(id, title string) error { return m.c.SetAppearance(id, title) }
-func (m macuakeTabClient) Execute(id, command string) error     { return m.c.Execute(id, command) }
-func (m macuakeTabClient) IsNotFound(err error) bool            { return macuake.IsNotFound(err) }
-func (m macuakeTabClient) IsUnavailable(err error) bool {
-	return errors.Is(err, macuake.ErrUnavailable)
-}
-func (m macuakeTabClient) List() ([]tabInfo, error) {
-	raw, err := m.c.List()
-	if err != nil {
-		return nil, err
-	}
-	out := make([]tabInfo, len(raw))
-	for i, t := range raw {
-		out[i] = tabInfo{SessionID: t.SessionID, Title: t.Title, Active: t.Active}
-	}
-	return out, nil
-}
-
-type macuakeTabRegistry struct{ r *macuake.Registry }
-
-func (m macuakeTabRegistry) Get(name string) (tabEntry, bool) {
-	t, ok := m.r.Get(name)
-	return tabEntry{SessionID: t.SessionID}, ok
-}
-func (m macuakeTabRegistry) Set(name, sid string) error   { return m.r.Set(name, sid) }
-func (m macuakeTabRegistry) Delete(name string) error     { return m.r.Delete(name) }
-func (m macuakeTabRegistry) Rename(old, new string) error { return m.r.Rename(old, new) }
-func (m macuakeTabRegistry) All() map[string]tabEntry {
-	out := map[string]tabEntry{}
-	for k, v := range m.r.All() {
-		out[k] = tabEntry{SessionID: v.SessionID}
-	}
-	return out
 }
 
 // --- iterm2 adapters ---

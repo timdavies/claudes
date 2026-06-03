@@ -36,7 +36,6 @@ import (
 
 	"github.com/timdavies/claudes/internal/config"
 	"github.com/timdavies/claudes/internal/iterm2"
-	"github.com/timdavies/claudes/internal/macuake"
 	"github.com/timdavies/claudes/internal/session"
 	"github.com/timdavies/claudes/internal/tmux"
 )
@@ -47,15 +46,14 @@ const (
 	logFilename       = "daemon.log"
 	hashesFilename    = "hashes.json"
 
-	defaultTickInterval        = 60 * time.Second
-	defaultMacuakeTickInterval = 5 * time.Second
-	captureLines               = 80
-	maxDescLen                 = 200 // hard cap on Haiku's output, just in case
-	summaryModel               = "haiku"
-	summaryTimeout             = 30 * time.Second
+	defaultTickInterval    = 60 * time.Second
+	defaultTabTickInterval = 5 * time.Second
+	captureLines           = 80
+	maxDescLen             = 200 // hard cap on Haiku's output, just in case
+	summaryModel           = "haiku"
+	summaryTimeout         = 30 * time.Second
 
-	macuakeTabsFilename = "macuake-tabs.json"
-	itermTabsFilename   = "iterm2-tabs.json"
+	itermTabsFilename = "iterm2-tabs.json"
 )
 
 // tickInterval honors CLAUDES_DAEMON_TICK (e.g. "5s", "30s") for development;
@@ -69,16 +67,16 @@ func tickInterval() time.Duration {
 	return defaultTickInterval
 }
 
-// macuakeTickInterval honors CLAUDES_MACUAKE_TICK. Faster than the main tick
-// (summarization is expensive; macuake reconciliation is a couple of cheap
-// tmux + socket calls), so tab cleanup feels snappy when an agent self-exits.
-func macuakeTickInterval() time.Duration {
-	if v := os.Getenv("CLAUDES_MACUAKE_TICK"); v != "" {
+// tabTickInterval honors CLAUDES_TAB_TICK. Faster than the main tick
+// (summarization is expensive; tab reconciliation is a couple of cheap
+// tmux + AppleScript calls), so tab cleanup feels snappy when an agent self-exits.
+func tabTickInterval() time.Duration {
+	if v := os.Getenv("CLAUDES_TAB_TICK"); v != "" {
 		if d, err := time.ParseDuration(v); err == nil && d > 0 {
 			return d
 		}
 	}
-	return defaultMacuakeTickInterval
+	return defaultTabTickInterval
 }
 
 // metaPrompt is the Haiku instruction. Kept short and prescriptive.
@@ -237,18 +235,12 @@ func Run(cfg *config.Config) error {
 	cache.load()
 
 	tick := tickInterval()
-	mTick := macuakeTickInterval()
+	mTick := tabTickInterval()
 
 	// tabReconcile closes orphaned tabs for the selected backend. nil when no
-	// tab integration is configured. Both backends expose the same Reconcile
-	// shape but with distinct concrete types, so we bind one closure here.
+	// tab integration is configured.
 	var tabReconcile func(live map[string]bool)
 	switch cfg.TabBackend() {
-	case "macuake":
-		mc := macuake.New(cfg.Macuake.Socket, 0)
-		reg := macuake.NewRegistry(filepath.Join(dir, macuakeTabsFilename))
-		tabReconcile = func(live map[string]bool) { macuake.Reconcile(mc, reg, live, logf) }
-		logf("daemon starting; pid=%d tick=%s tab_tick=%s backend=macuake", os.Getpid(), tick, mTick)
 	case "iterm2":
 		ic := iterm2.New(0)
 		reg := iterm2.NewRegistry(filepath.Join(dir, itermTabsFilename))
@@ -321,7 +313,7 @@ func Run(cfg *config.Config) error {
 		}
 		cache.save()
 
-		// Wait for the next main tick, but service macuake reconciliation on
+		// Wait for the next main tick, but service tab reconciliation on
 		// the faster cadence in between so tab cleanup feels snappy when an
 		// agent self-exits.
 		mainDeadline := time.After(tick)

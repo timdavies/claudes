@@ -21,14 +21,7 @@ type Project struct {
 	Hooks       Hooks    `toml:"hooks"`
 }
 
-type Macuake struct {
-	Enabled bool   `toml:"enabled"`
-	Socket  string `toml:"socket"`
-}
-
-// Tabs selects the terminal-tab integration backend: "iterm2", "macuake", or ""
-// (off). When unset, the legacy [macuake] enabled flag is honored as a fallback
-// (see Config.TabBackend).
+// Tabs selects the terminal-tab integration backend: "iterm2" or "" (off).
 type Tabs struct {
 	Backend string `toml:"backend"`
 }
@@ -44,23 +37,14 @@ type Config struct {
 	Models         map[string]string  `toml:"models"`
 	Projects       map[string]Project `toml:"projects"`
 	Hooks          Hooks              `toml:"hooks"`
-	Macuake        Macuake            `toml:"macuake"`
 	Tabs           Tabs               `toml:"tabs"`
 
 	Path string `toml:"-"`
 }
 
-// TabBackend returns the active tab-integration backend: "iterm2", "macuake", or
-// "" (off). The [tabs] backend selector wins; absent that, a legacy [macuake]
-// enabled=true maps to "macuake" so existing configs keep working.
+// TabBackend returns the active tab-integration backend: "iterm2" or "" (off).
 func (c *Config) TabBackend() string {
-	if c.Tabs.Backend != "" {
-		return c.Tabs.Backend
-	}
-	if c.Macuake.Enabled {
-		return "macuake"
-	}
-	return ""
+	return c.Tabs.Backend
 }
 
 // Resolved is the merged settings for a single command invocation.
@@ -203,14 +187,6 @@ func mergeOver(base, over *Config) {
 	}
 	if over.Hooks.PostStop != "" {
 		base.Hooks.PostStop = over.Hooks.PostStop
-	}
-	// macuake is global-only: per-project override is YAGNI and would surprise
-	// users by silently turning off the integration in one project.
-	if over.Macuake.Enabled {
-		base.Macuake.Enabled = true
-	}
-	if over.Macuake.Socket != "" {
-		base.Macuake.Socket = over.Macuake.Socket
 	}
 	if over.Tabs.Backend != "" {
 		base.Tabs.Backend = over.Tabs.Backend
