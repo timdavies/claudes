@@ -61,7 +61,7 @@ var openCmd = &cobra.Command{
 		// If the agent is paused-pinned, resurrect it transparently before attach.
 		if has, _ := client.Has(full); !has {
 			if reg, err := pinnedRegistry(); err == nil && reg.Has(displayName) {
-				if err := resurrectPin(client, cfg, displayName); err != nil {
+				if err := resurrectPin(client, cfg, displayName, false); err != nil {
 					return err
 				}
 			}

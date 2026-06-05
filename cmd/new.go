@@ -106,7 +106,7 @@ var newCmd = &cobra.Command{
 				displayName, displayName, displayName)
 		}
 
-		if err := spawnSession(client, cfg, resolved, displayName, passthrough); err != nil {
+		if err := spawnSession(client, cfg, resolved, displayName, passthrough, true); err != nil {
 			return err
 		}
 
@@ -127,9 +127,11 @@ var newCmd = &cobra.Command{
 
 // spawnSession runs the full session-creation pipeline shared by `claudes new`
 // and `claudes start`: build cmdline → tmux new-session → daemon ensure →
-// wait for claude to boot → open terminal tab → post_new hook.
+// wait for claude to boot → open terminal tab → post_new hook. openTab is false
+// when the caller will attach in the current terminal (e.g. `claudes open`
+// resurrecting a pin), so we don't also spawn a second tab on the same session.
 func spawnSession(client *tmux.Client, cfg *config.Config, resolved config.Resolved,
-	displayName string, passthrough []string) error {
+	displayName string, passthrough []string, openTab bool) error {
 	full := session.FullName(cfg.Prefix, displayName)
 
 	cmdline := []string{"claude"}
@@ -159,7 +161,9 @@ func spawnSession(client *tmux.Client, cfg *config.Config, resolved config.Resol
 
 	ensureDaemonForCmd(true)
 	waitForReady(client, full, 30*time.Second)
-	maybeOpenTab(cfg, full, displayName, resolved.Dir, client)
+	if openTab {
+		maybeOpenTab(cfg, full, displayName, resolved.Dir, client)
+	}
 
 	_ = hooks.Run("post_new", resolved.Hooks.PostNew,
 		hookEnv(displayName, resolved.Project, resolved.Dir, resolved.Model))

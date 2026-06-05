@@ -67,7 +67,7 @@ var startCmd = &cobra.Command{
 		if has, _ := client.Has(full); has {
 			return fmt.Errorf("agent %q is already running", name)
 		}
-		if err := resurrectPin(client, cfg, name); err != nil {
+		if err := resurrectPin(client, cfg, name, true); err != nil {
 			return err
 		}
 		fmt.Println(name)
@@ -78,7 +78,9 @@ var startCmd = &cobra.Command{
 // resurrectPin spawns a fresh tmux session for a paused pinned agent using
 // its saved metadata. Caller is responsible for the not-already-running check.
 // Re-stamps the @claudes-pinned marker so 'claudes ls' continues to show 📌.
-func resurrectPin(client *tmux.Client, cfg *config.Config, name string) error {
+// openTab is false when the caller will attach in the current terminal (e.g.
+// `claudes open`), so resurrecting doesn't spawn a redundant second tab.
+func resurrectPin(client *tmux.Client, cfg *config.Config, name string, openTab bool) error {
 	reg, err := pinnedRegistry()
 	if err != nil {
 		return err
@@ -106,7 +108,7 @@ func resurrectPin(client *tmux.Client, cfg *config.Config, name string) error {
 			resolved.Hooks = p.Hooks
 		}
 	}
-	if err := spawnSession(client, cfg, resolved, name, entry.PassthroughArgs); err != nil {
+	if err := spawnSession(client, cfg, resolved, name, entry.PassthroughArgs, openTab); err != nil {
 		return err
 	}
 	full := session.FullName(cfg.Prefix, name)
