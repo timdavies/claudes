@@ -147,6 +147,17 @@ func (c *Client) SessionEnv(name string) (map[string]string, error) {
 	return env, nil
 }
 
+// PaneSessionName returns the session name owning paneID (typically $TMUX_PANE),
+// resolved on this client's socket. Errors when the server doesn't know the pane
+// — e.g. it lives on a different (nested) tmux server.
+func (c *Client) PaneSessionName(paneID string) (string, error) {
+	out, err := c.cmd("display-message", "-p", "-t", paneID, "#{session_name}").CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("tmux display-message: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
 // SetSessionEnv sets a single key=value in the session env.
 func (c *Client) SetSessionEnv(name, key, value string) error {
 	out, err := c.cmd("set-environment", "-t", name, key, value).CombinedOutput()
