@@ -10,7 +10,10 @@ import (
 	"github.com/timdavies/claudes/internal/tmux"
 )
 
-var sendKeysMode bool
+var (
+	sendKeysMode bool
+	noFrom       bool
+)
 
 var sendCmd = &cobra.Command{
 	Use:     "write [name] <message|key...>",
@@ -56,11 +59,26 @@ func runSendMessage(client *tmux.Client, cfg *config.Config, args []string) erro
 		name = s.Name
 	}
 	full := session.FullName(cfg.Prefix, name)
-	if err := client.SendKeys(full, message); err != nil {
+	if err := client.SendKeys(full, withSenderTag(cfg, name, message)); err != nil {
 		return err
 	}
 	fmt.Println(name)
 	return nil
+}
+
+// withSenderTag prepends a [MESSAGE FROM <sender>] line so the recipient knows
+// who pinged them, when the write originates from inside a claudes session.
+// No tag for manual writes from a plain shell (sender unresolved), self-writes,
+// or when --no-from is set.
+func withSenderTag(cfg *config.Config, target, message string) string {
+	if noFrom {
+		return message
+	}
+	sender := currentSessionName(cfg)
+	if sender == "" || sender == target {
+		return message
+	}
+	return fmt.Sprintf("[MESSAGE FROM %s]\n\n%s", sender, message)
 }
 
 func runSendKeys(client *tmux.Client, cfg *config.Config, args []string) error {
@@ -103,5 +121,6 @@ func runSendKeys(client *tmux.Client, cfg *config.Config, args []string) error {
 
 func init() {
 	sendCmd.Flags().BoolVar(&sendKeysMode, "keys", false, "Send raw tmux keys (no auto-Enter)")
+	sendCmd.Flags().BoolVar(&noFrom, "no-from", false, "Don't prepend a [MESSAGE FROM <sender>] tag")
 	rootCmd.AddCommand(sendCmd)
 }
