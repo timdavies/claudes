@@ -4,7 +4,9 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strings"
 	"testing"
+	"time"
 )
 
 // newTestClient starts a throwaway tmux server on a scratch socket and
@@ -45,6 +47,43 @@ func TestHasIsExactMatch(t *testing.T) {
 	}
 	if !has {
 		t.Error("Has(foo-bar) = false, want true")
+	}
+}
+
+// Pane-targeted commands (capture-pane, send-keys via paste-buffer) need the
+// `=name:` target form — bare `=name` is parsed as a pane spec and fails with
+// "can't find pane". This is the path `claudes read`/`claudes write` ride on;
+// it was broken while the session-target tests above stayed green.
+func TestPaneCommandsAcceptExactTarget(t *testing.T) {
+	c := newTestClient(t)
+	if err := c.NewSession("foo-bar", "", nil, []string{"cat"}); err != nil {
+		t.Fatalf("NewSession: %v", err)
+	}
+
+	if err := c.SendKeys("foo-bar", "hello-exact"); err != nil {
+		t.Fatalf("SendKeys(foo-bar): %v", err)
+	}
+	if err := c.SendKeys("foo", "nope"); err == nil {
+		t.Error("SendKeys(foo) succeeded with only foo-bar running")
+	}
+
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		out, err := c.CapturePane("foo-bar", 50)
+		if err != nil {
+			t.Fatalf("CapturePane(foo-bar): %v", err)
+		}
+		if strings.Contains(out, "hello-exact") {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("sent text never appeared in pane; capture:\n%s", out)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	if _, err := c.CapturePane("foo", 5); err == nil {
+		t.Error("CapturePane(foo) succeeded with only foo-bar running")
 	}
 }
 

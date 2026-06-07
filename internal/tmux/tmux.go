@@ -43,12 +43,17 @@ func (c *Client) cmd(args ...string) *exec.Cmd {
 	return exec.Command("tmux", full...)
 }
 
-// exact prefixes a session name with '=' so tmux matches it exactly. A bare
+// exact converts a session name to tmux's exact-match target form. A bare
 // `-t name` is treated as a prefix (then fnmatch) pattern — e.g. with only
 // "foo-bar" running, `has-session -t foo` succeeds and `kill-session -t foo`
 // kills foo-bar. Every -t that targets a session by name must go through this.
+//
+// The trailing colon matters: pane/window-targeted commands (capture-pane,
+// send-keys, paste-buffer, pipe-pane) parse `=name` as a pane spec and fail
+// with "can't find pane"; `=name:` means "exact session name, default window"
+// and is accepted by session-targeted commands too.
 func exact(name string) string {
-	return "=" + name
+	return "=" + name + ":"
 }
 
 // Info is the raw per-session data we can pull from tmux.
