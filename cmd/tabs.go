@@ -250,7 +250,7 @@ func maybeRenameTab(cfg *config.Config, oldName, newName string) {
 // makes the tab self-reap when the tmux session dies.)
 func attachCommand(t *tmux.Client, full, displayName string) string {
 	parts := append([]string{"tmux"}, t.BaseArgs()...)
-	parts = append(parts, "attach-session", "-t", full)
+	parts = append(parts, "attach-session", "-t", "="+full) // '=' forces exact session-name match
 	quoted := make([]string, len(parts))
 	for i, p := range parts {
 		quoted[i] = shellQuote(p)

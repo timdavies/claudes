@@ -43,6 +43,14 @@ func (c *Client) cmd(args ...string) *exec.Cmd {
 	return exec.Command("tmux", full...)
 }
 
+// exact prefixes a session name with '=' so tmux matches it exactly. A bare
+// `-t name` is treated as a prefix (then fnmatch) pattern — e.g. with only
+// "foo-bar" running, `has-session -t foo` succeeds and `kill-session -t foo`
+// kills foo-bar. Every -t that targets a session by name must go through this.
+func exact(name string) string {
+	return "=" + name
+}
+
 // Info is the raw per-session data we can pull from tmux.
 type Info struct {
 	Name     string
@@ -86,7 +94,7 @@ func (c *Client) List() ([]Info, error) {
 
 // Has returns true if a session by full name exists.
 func (c *Client) Has(name string) (bool, error) {
-	out, err := c.cmd("has-session", "-t", name).CombinedOutput()
+	out, err := c.cmd("has-session", "-t", exact(name)).CombinedOutput()
 	if err == nil {
 		return true, nil
 	}
@@ -123,7 +131,7 @@ func (c *Client) NewSession(name, dir string, extraEnv []string, cmdline []strin
 // Variables marked for removal (lines starting with `-`) are skipped.
 // Missing/empty session returns an empty map without error.
 func (c *Client) SessionEnv(name string) (map[string]string, error) {
-	out, err := c.cmd("show-environment", "-t", name).CombinedOutput()
+	out, err := c.cmd("show-environment", "-t", exact(name)).CombinedOutput()
 	if err != nil {
 		s := string(out)
 		if strings.Contains(s, "can't find session") ||
@@ -160,7 +168,7 @@ func (c *Client) PaneSessionName(paneID string) (string, error) {
 
 // SetSessionEnv sets a single key=value in the session env.
 func (c *Client) SetSessionEnv(name, key, value string) error {
-	out, err := c.cmd("set-environment", "-t", name, key, value).CombinedOutput()
+	out, err := c.cmd("set-environment", "-t", exact(name), key, value).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("tmux set-environment: %w: %s", err, strings.TrimSpace(string(out)))
 	}
@@ -169,7 +177,7 @@ func (c *Client) SetSessionEnv(name, key, value string) error {
 
 // UnsetSessionEnv removes a key from the session env.
 func (c *Client) UnsetSessionEnv(name, key string) error {
-	out, err := c.cmd("set-environment", "-u", "-t", name, key).CombinedOutput()
+	out, err := c.cmd("set-environment", "-u", "-t", exact(name), key).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("tmux set-environment -u: %w: %s", err, strings.TrimSpace(string(out)))
 	}
@@ -178,7 +186,7 @@ func (c *Client) UnsetSessionEnv(name, key string) error {
 
 // Rename renames a session.
 func (c *Client) Rename(oldName, newName string) error {
-	out, err := c.cmd("rename-session", "-t", oldName, newName).CombinedOutput()
+	out, err := c.cmd("rename-session", "-t", exact(oldName), newName).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("tmux rename-session: %w: %s", err, strings.TrimSpace(string(out)))
 	}
@@ -187,7 +195,7 @@ func (c *Client) Rename(oldName, newName string) error {
 
 // Kill removes a session immediately.
 func (c *Client) Kill(name string) error {
-	out, err := c.cmd("kill-session", "-t", name).CombinedOutput()
+	out, err := c.cmd("kill-session", "-t", exact(name)).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("tmux kill-session: %w: %s", err, strings.TrimSpace(string(out)))
 	}
@@ -232,7 +240,7 @@ func (c *Client) SendKeys(name, text string) error {
 		}
 
 		// -p: bracketed paste; -d: delete buffer after pasting.
-		out, err := c.cmd("paste-buffer", "-p", "-d", "-b", buf, "-t", name).CombinedOutput()
+		out, err := c.cmd("paste-buffer", "-p", "-d", "-b", buf, "-t", exact(name)).CombinedOutput()
 		if err != nil {
 			// paste-buffer didn't consume the buffer — clean it up so it
 			// doesn't sit on the server forever.
@@ -240,7 +248,7 @@ func (c *Client) SendKeys(name, text string) error {
 			return fmt.Errorf("tmux paste-buffer: %w: %s", err, strings.TrimSpace(string(out)))
 		}
 	}
-	out, err := c.cmd("send-keys", "-t", name, "Enter").CombinedOutput()
+	out, err := c.cmd("send-keys", "-t", exact(name), "Enter").CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("tmux send-keys: %w: %s", err, strings.TrimSpace(string(out)))
 	}
@@ -253,7 +261,7 @@ func (c *Client) SendRawKeys(name string, keys []string) error {
 	if len(keys) == 0 {
 		return nil
 	}
-	args := append([]string{"send-keys", "-t", name}, keys...)
+	args := append([]string{"send-keys", "-t", exact(name)}, keys...)
 	out, err := c.cmd(args...).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("tmux send-keys: %w: %s", err, strings.TrimSpace(string(out)))
@@ -266,7 +274,7 @@ func (c *Client) CapturePane(name string, lines int) (string, error) {
 	if lines <= 0 {
 		lines = 50
 	}
-	args := []string{"capture-pane", "-p", "-t", name, "-S", "-" + strconv.Itoa(lines)}
+	args := []string{"capture-pane", "-p", "-t", exact(name), "-S", "-" + strconv.Itoa(lines)}
 	var buf bytes.Buffer
 	cmd := c.cmd(args...)
 	cmd.Stdout = &buf
@@ -284,14 +292,14 @@ func (c *Client) Attach(name string) error {
 		return err
 	}
 	args := append([]string{"tmux"}, c.BaseArgs()...)
-	args = append(args, "attach-session", "-t", name)
+	args = append(args, "attach-session", "-t", exact(name))
 	return syscall.Exec(tmuxBin, args, os.Environ())
 }
 
 // PipePaneTail attaches a pipe to the pane and tails it to stdout until ctx is done.
 // Returns a stop function that disables the pipe.
 func (c *Client) PipePaneStart(name, fifo string) error {
-	out, err := c.cmd("pipe-pane", "-t", name, "-O", fmt.Sprintf("cat >> %q", fifo)).CombinedOutput()
+	out, err := c.cmd("pipe-pane", "-t", exact(name), "-O", fmt.Sprintf("cat >> %q", fifo)).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("tmux pipe-pane: %w: %s", err, strings.TrimSpace(string(out)))
 	}
@@ -299,7 +307,7 @@ func (c *Client) PipePaneStart(name, fifo string) error {
 }
 
 func (c *Client) PipePaneStop(name string) error {
-	_, err := c.cmd("pipe-pane", "-t", name).CombinedOutput()
+	_, err := c.cmd("pipe-pane", "-t", exact(name)).CombinedOutput()
 	return err
 }
 
