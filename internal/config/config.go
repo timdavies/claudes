@@ -111,6 +111,7 @@ func Load(override string) (Config, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
+			applyTmuxConfFallback(&cfg)
 			return cfg, nil
 		}
 		return cfg, err
@@ -127,8 +128,14 @@ func Load(override string) (Config, error) {
 		p.Dir = expand(p.Dir)
 		cfg.Projects[name] = p
 	}
-	// If user hasn't set tmux_config, fall back to the bundled default
-	// at ~/.config/claudes/tmux.conf when it exists (installed via `make install`).
+	applyTmuxConfFallback(&cfg)
+	return cfg, nil
+}
+
+// applyTmuxConfFallback points TmuxConfig at the bundled default at
+// ~/.config/claudes/tmux.conf (installed via `make install`) when the user
+// hasn't set tmux_config explicitly and the file exists.
+func applyTmuxConfFallback(cfg *Config) {
 	if cfg.TmuxConfig == "" {
 		if def := defaultTmuxConfPath(); def != "" {
 			if _, err := os.Stat(def); err == nil {
@@ -136,7 +143,6 @@ func Load(override string) (Config, error) {
 			}
 		}
 	}
-	return cfg, nil
 }
 
 func defaultTmuxConfPath() string {
