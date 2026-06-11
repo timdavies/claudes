@@ -28,6 +28,8 @@ Three layers, top-down:
 
 - **`internal/tasks`** — A cross-agent task queue persisted at `~/.cache/claudes/tasks.json`. This is durable, mutable shared state (unlike most of claudes, where tmux is the source of truth — it follows the same flock + atomic-write pattern as `internal/pinned`). Every mutation is a read-modify-write inside an exclusive `flock`, which is what makes `claim` a safe compare-and-set: two agents racing to claim the same task can't both win. `cmd/tasks.go` is the subcommand surface (`add`/`claim`/`complete`/`rm`/`show`/`ls`); `cmd/tasks_tui.go` is the actionable dashboard. Identity (creator/claimant) comes from `currentSessionName`; `complete` reports back to the creator via the same `SendKeys` path `claudes write` uses.
 
+- **`internal/cost`** — Estimates per-session cost. claudes assigns the Claude Code session UUID at spawn (`claude --session-id`, stamped as `CLAUDES_SESSION_ID`), which makes the transcript path deterministic: `~/.claude/projects/<EncodeDir(cwd)>/<uuid>.jsonl`, where `EncodeDir` replaces every non-alphanumeric rune with `-` (no collapsing — `/x/.claude` → `-x--claude`). `SessionUSD` sums `message.usage` token counts × the per-model `pricing` table. The transcript stores tokens, not dollars, so the figure is an estimate; update `pricing` when public rates move. The daemon parses it each tick (mtime-gated) and stamps `@claudes-cost`, which `claudes ls`/TUI render beside the model.
+
 `internal/session` is thin glue between tmux's session listing and the config's project/model inference.
 
 ## Session lifecycle

@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bufio"
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -136,10 +137,22 @@ func spawnSession(client *tmux.Client, cfg *config.Config, resolved config.Resol
 	displayName string, passthrough []string, openTab bool) error {
 	full := session.FullName(cfg.Prefix, displayName)
 
+	// Assign the Claude Code session UUID ourselves so the transcript path is
+	// deterministic (~/.claude/projects/<encoded-dir>/<uuid>.jsonl). The daemon
+	// reads it back to estimate cost. A passthrough --session-id wins, so don't
+	// stomp it.
+	sessionID := uuidV4()
+	if hasFlag(passthrough, "--session-id") || hasFlag(resolved.DefaultArgs, "--session-id") {
+		sessionID = ""
+	}
+
 	cmdline := []string{"claude"}
 	cmdline = append(cmdline, resolved.DefaultArgs...)
 	if resolved.Model != "" {
 		cmdline = append(cmdline, "--model", resolved.Model)
+	}
+	if sessionID != "" {
+		cmdline = append(cmdline, "--session-id", sessionID)
 	}
 	cmdline = append(cmdline, passthrough...)
 
@@ -153,6 +166,7 @@ func spawnSession(client *tmux.Client, cfg *config.Config, resolved config.Resol
 		"CLAUDES_PROJECT=" + resolved.Project,
 		"CLAUDES_MODEL=" + resolved.Model,
 		"CLAUDES_GROUP=" + resolved.Group,
+		"CLAUDES_SESSION_ID=" + sessionID,
 		"CLAUDES_DIR=" + resolved.Dir,
 		"CLAUDES_DEFAULT_ARGS=" + mustJSON(resolved.DefaultArgs),
 		"CLAUDES_PASSTHROUGH=" + mustJSON(passthrough),
@@ -176,6 +190,30 @@ func spawnSession(client *tmux.Client, cfg *config.Config, resolved config.Resol
 func mustJSON(v any) string {
 	b, _ := json.Marshal(v)
 	return string(b)
+}
+
+// uuidV4 returns a random RFC-4122 v4 UUID. Used to pin the Claude Code session
+// id at spawn so its transcript path is known. Falls back to the empty string
+// on the (vanishingly unlikely) rand failure, which just disables cost tracking
+// for that session rather than aborting the spawn.
+func uuidV4() string {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return ""
+	}
+	b[6] = (b[6] & 0x0f) | 0x40 // version 4
+	b[8] = (b[8] & 0x3f) | 0x80 // variant 10
+	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
+}
+
+// hasFlag reports whether args contains flag, either bare or as flag=value.
+func hasFlag(args []string, flag string) bool {
+	for _, a := range args {
+		if a == flag || strings.HasPrefix(a, flag+"=") {
+			return true
+		}
+	}
+	return false
 }
 
 func init() {

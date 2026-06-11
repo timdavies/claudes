@@ -22,6 +22,7 @@ type agentRow struct {
 	Dir         string
 	Description string
 	Group       string
+	Cost        string
 	Pinned      bool
 	HasTab      bool
 	TabSID      string
@@ -114,6 +115,7 @@ func loadAgentRows(client *tmux.Client, cfg *config.Config) []agentRow {
 			Dir:         s.Dir,
 			Description: s.Description,
 			Group:       s.Group,
+			Cost:        s.Cost,
 			Pinned:      s.Pinned,
 			HasTab:      has,
 			TabSID:      sid,
@@ -132,6 +134,7 @@ var (
 	cardMeta    = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))  // dim
 	cardCursor  = lipgloss.NewStyle().Foreground(lipgloss.Color("14")).Bold(true)
 	cardGroup   = lipgloss.NewStyle().Foreground(lipgloss.Color("11")).Bold(true) // yellow
+	cardCost    = lipgloss.NewStyle().Foreground(lipgloss.Color("10"))            // green
 )
 
 // statusColor is the rail color for a status: it's the only place state is
@@ -198,10 +201,13 @@ func renderAgents(rows []agentRow, cursor, width int) string {
 		}
 		namePadded := nameStyle.Render(name) + strings.Repeat(" ", nameW-lipgloss.Width(name))
 
-		// Line 1: name · model · project.
+		// Line 1: name · model · project · cost.
 		line1 := namePadded + "  " + cardModel.Render(dash(r.Model))
 		if r.Project != "" {
 			line1 += "  " + cardProject.Render(r.Project)
+		}
+		if r.Cost != "" && r.Cost != "0.00" {
+			line1 += "  " + cardCost.Render("$"+r.Cost)
 		}
 
 		// Line 2: dir, plus the daemon's description when present.

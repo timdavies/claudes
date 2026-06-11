@@ -47,6 +47,10 @@ Most commands accept no name and open an interactive picker.
 
 A background daemon auto-spawns on first `claudes new`/`open`/`ls` and self-exits when no sessions remain. Every minute (or `CLAUDES_DAEMON_TICK=15s` for dev) it captures each session's pane, hashes it, and asks `claude -p --model haiku` for an 8-12 word description. The result is written to the tmux session env (`@claudes-description`) and shown in `claudes ls`. State files live in `~/.cache/claudes/`. To force-stop the daemon: `claudes daemon stop`. It'll respawn next time you run `claudes ls` (assuming sessions exist).
 
+## Cost tracking
+
+`claudes ls` shows an estimated cost per agent (e.g. `$12.47`) next to its model. At spawn, claudes assigns the Claude Code session UUID (`claude --session-id`), so the session's transcript path is deterministic. The same daemon tick parses that transcript, sums token usage × per-model pricing, and stamps the dollar figure into the session env (`@claudes-cost`). It's an estimate (the transcript stores tokens, not dollars) — accurate as long as the pricing table in `internal/cost` tracks current rates. Sessions created before this feature (no stamped UUID) show no cost. `$0.00` is suppressed.
+
 ## Writing input — important
 
 `claudes write` is **literal by default**: `claudes write foo "Up"` types the two characters `U`,`p` and presses Enter. To send actual key presses (Escape to dismiss a dialog, arrows for history, Ctrl-C to interrupt), use `--keys`:

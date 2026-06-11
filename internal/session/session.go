@@ -29,6 +29,8 @@ type Session struct {
 	Status      Status
 	Description string // ambient summary written by the daemon, may be empty
 	Group       string // agent group; "" means the default group
+	SessionID   string // Claude Code session UUID (transcript filename stem)
+	Cost        string // estimated cost in USD, stamped by the daemon (e.g. "1.23")
 	Pinned      bool
 	Raw         tmux.Info
 }
@@ -87,6 +89,8 @@ func List(client *tmux.Client, cfg *config.Config) ([]Session, error) {
 			Dir:         in.Path,
 			Status:      classify(in),
 			Description: env["@claudes-description"],
+			SessionID:   env["CLAUDES_SESSION_ID"],
+			Cost:        env["@claudes-cost"],
 			Raw:         in,
 		}
 		if v := env["CLAUDES_PROJECT"]; v != "" {
