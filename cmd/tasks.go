@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
-	"golang.org/x/term"
 
 	"github.com/timdavies/claudes/internal/config"
 	"github.com/timdavies/claudes/internal/daemon"
@@ -94,21 +93,6 @@ func init() {
 
 	tasksCmd.AddCommand(tasksAddCmd, tasksClaimCmd, tasksCompleteCmd, tasksRmCmd, tasksShowCmd, tasksLsCmd)
 	rootCmd.AddCommand(tasksCmd)
-}
-
-// terminalWidth returns stdout's column count, or a stable fallback when
-// stdout isn't a terminal (so piped output stays deterministic).
-func terminalWidth() int {
-	const fallback = 80
-	fd := int(os.Stdout.Fd())
-	if !term.IsTerminal(fd) {
-		return fallback
-	}
-	cols, _, err := term.GetSize(fd)
-	if err != nil || cols <= 0 {
-		return fallback
-	}
-	return cols
 }
 
 // taskStore returns the queue rooted at ~/.cache/claudes/tasks.json.
