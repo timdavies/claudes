@@ -3,15 +3,11 @@ package cmd
 import (
 	"fmt"
 	"os"
-	"sort"
 	"strings"
-	"text/tabwriter"
 	"unicode/utf8"
 
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
-
-	"github.com/timdavies/claudes/internal/session"
 )
 
 var lsProject string
@@ -35,39 +31,19 @@ func runLs(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	client := newClient(cfg)
-	sessions, err := session.List(client, cfg)
-	if err != nil {
-		return err
-	}
-	// Merge in paused pinned agents (those with no live tmux session).
-	if reg, err := pinnedRegistry(); err == nil && reg != nil {
-		live := map[string]bool{}
-		for _, s := range sessions {
-			live[s.Name] = true
-		}
-		for name, e := range reg.All() {
-			if live[name] {
-				continue
-			}
-			sessions = append(sessions, session.Session{
-				Name: name, Project: e.Project, Model: e.Model, Dir: e.Dir,
-				Status: session.StatusPaused, Pinned: true,
-			})
-		}
-	}
-	sort.Slice(sessions, func(i, j int) bool { return sessions[i].Name < sessions[j].Name })
+	rows := loadAgentRows(client, cfg)
 	if lsProject != "" {
-		filtered := sessions[:0]
-		for _, s := range sessions {
-			if s.Project == lsProject {
-				filtered = append(filtered, s)
+		filtered := rows[:0]
+		for _, r := range rows {
+			if r.Project == lsProject {
+				filtered = append(filtered, r)
 			}
 		}
-		sessions = filtered
+		rows = filtered
 	}
-	if len(sessions) == 0 {
+	if len(rows) == 0 {
 		// Bare `claudes` with no sessions → show full help instead of an empty list.
-		// Explicit `claudes ls` stays silent (scriptable).
+		// Explicit `claudes ls` stays silent.
 		if cmd.Use == "claudes" {
 			return cmd.Help()
 		}
@@ -77,28 +53,8 @@ func runLs(cmd *cobra.Command, args []string) error {
 	// No-op if it's already running. Best-effort.
 	ensureDaemonForCmd(false)
 
-	descBudget := descriptionBudget(sessions)
-
-	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "NAME\tPROJECT\tMODEL\tSTATUS\tDIR\tDESCRIPTION")
-	for _, s := range sessions {
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n",
-			displayName(s),
-			dash(s.Project),
-			dash(s.Model),
-			s.Status,
-			dash(tildify(s.Dir)),
-			dash(truncate(s.Description, descBudget)))
-	}
-	return w.Flush()
-}
-
-// displayName renders the NAME column, adding a trailing 📌 when pinned.
-func displayName(s session.Session) string {
-	if s.Pinned {
-		return s.Name + " 📌"
-	}
-	return s.Name
+	fmt.Fprint(os.Stdout, renderAgents(rows, -1, terminalWidth()))
+	return nil
 }
 
 func dash(s string) string {
@@ -137,12 +93,10 @@ func truncate(s string, n int) string {
 	return string(r[:n-1]) + "…"
 }
 
-// descriptionBudget computes a sensible truncation cap for the DESCRIPTION
-// column, given the terminal width and the widest fixed-column data we have.
-// Falls back to 60 when stdout isn't a terminal (so scripted output is
-// stable).
-func descriptionBudget(ss []session.Session) int {
-	const fallback = 60
+// terminalWidth returns stdout's column count, or a stable fallback when
+// stdout isn't a terminal (so piped/scripted output stays deterministic).
+func terminalWidth() int {
+	const fallback = 80
 	fd := int(os.Stdout.Fd())
 	if !term.IsTerminal(fd) {
 		return fallback
@@ -151,32 +105,5 @@ func descriptionBudget(ss []session.Session) int {
 	if err != nil || cols <= 0 {
 		return fallback
 	}
-	headers := []string{"NAME", "PROJECT", "MODEL", "STATUS", "DIR"}
-	widths := make([]int, len(headers))
-	for i, h := range headers {
-		widths[i] = utf8.RuneCountInString(h)
-	}
-	for _, s := range ss {
-		w := []int{
-			utf8.RuneCountInString(displayName(s)),
-			utf8.RuneCountInString(dash(s.Project)),
-			utf8.RuneCountInString(dash(s.Model)),
-			utf8.RuneCountInString(string(s.Status)),
-			utf8.RuneCountInString(dash(tildify(s.Dir))),
-		}
-		for i, x := range w {
-			if x > widths[i] {
-				widths[i] = x
-			}
-		}
-	}
-	used := 0
-	for _, w := range widths {
-		used += w + 2 // tabwriter padding
-	}
-	budget := cols - used - 1 // leave a column for safety
-	if budget < 20 {
-		return 20 // floor: prefer truncation over ugly wrapping
-	}
-	return budget
+	return cols
 }
