@@ -1,6 +1,6 @@
 ---
 name: claudes
-description: Manage Claude Code sessions via the `claudes` CLI — a screen-like session manager backed by tmux. Use when the user asks to create, list, attach, send messages to, rename, read output from, or stop background Claude Code sessions.
+description: Manage Claude Code sessions via the `claudes` CLI — a screen-like session manager backed by tmux. Use when the user asks to create, list, attach, send messages to, rename, read output from, or stop background Claude Code sessions, or to queue/claim/hand off tasks between agents.
 ---
 
 # claudes — Claude Code session manager
@@ -11,6 +11,7 @@ description: Manage Claude Code sessions via the `claudes` CLI — a screen-like
 
 - The user wants to spawn, query, or kill a Claude Code session running in the background.
 - The user wants to send a message to an already-running agent and read what it produced.
+- The user wants to queue work for other agents to pick up, or claim/complete shared tasks (`claudes tasks`).
 - The user mentions `claudes new`, `claudes send`, `claudes ls`, or similar.
 
 For visual layout (windows, workspaces, panes, browsers, notifications), use the `cmux` skill instead. For sending input to a *non-Claude* shell, use `cmux send`/`cmux send-key`. `claudes` is specifically for Claude Code sessions.
@@ -34,6 +35,7 @@ For visual layout (windows, workspaces, panes, browsers, notifications), use the
 | Manage projects | `claudes project {list,add,rm,show}` |
 | Read/write top-level config | `claudes config {show,get,set}` |
 | Manage the daemon | `claudes daemon {status,start,stop,logs}` |
+| Cross-agent task queue | `claudes tasks` (dashboard) / `claudes tasks {add,claim,complete,rm,show,ls}` |
 
 Most commands accept no name and open an interactive picker.
 
@@ -80,6 +82,24 @@ claudes write bug-fix-1 "read the failing spec and propose a fix"
 claudes write --keys my-session Escape
 claudes write my-session "retry the request"
 ```
+
+## Cross-agent task queue
+
+`claudes tasks` is a shared queue so agents (or you) can hand work to each other. State lives in `~/.cache/claudes/tasks.json`, guarded by a file lock — `claim` is a safe compare-and-set, so two agents can't grab the same task.
+
+```
+claudes tasks add "wire up the export endpoint"        # open queue — anyone can claim
+claudes tasks add --to bob "review the migration"      # directed at bob (also pokes bob to claim)
+claudes tasks claim                                     # claim the oldest task open to you
+claudes tasks claim 3                                   # claim a specific task by id
+claudes tasks complete --result "done, see PR #42"      # complete your claimed task; reports back to its creator
+claudes tasks complete 3                                # complete a specific task
+claudes tasks ls                                        # plain list; `claudes tasks` alone = live dashboard
+```
+
+- **Identity** (who created/claimed) is the current session name (same as `claudes whoami`). From a plain shell, pass `--as <name>`; humans can create/complete but not claim.
+- **Report-back**: `complete` messages the task's creating agent via `claudes write` (skipped when the creator is a human or no longer running).
+- **Completing** with no id picks your single claimed task; if you have several, pass the id. The dashboard's `x` key completes without a note — use the CLI `--result` to attach one.
 
 ## Gotchas
 
