@@ -139,7 +139,11 @@ func (c *Client) Execute(sessionID, command string) error {
 
 // Focus selects the tab + pane, raises the window, and brings iTerm2 forward.
 func (c *Client) Focus(sessionID string) error {
-	return c.matchAction(sessionID, "select t\n          select s\n          set frontmost of w to true\n          activate")
+	// `select w` raises the containing window; `select t`/`select s` pick the
+	// tab and split; `activate` brings iTerm2 itself to the front. We previously
+	// used `set frontmost of w to true`, but that throws -10000 (AppleEvent
+	// handler failed) against a window reference from the enclosing repeat loop.
+	return c.matchAction(sessionID, "select w\n          select t\n          select s\n          activate")
 }
 
 // CloseSession closes the matched session. Note: if the session still has a

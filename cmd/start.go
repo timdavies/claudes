@@ -8,6 +8,7 @@ import (
 
 	"github.com/timdavies/claudes/internal/config"
 	"github.com/timdavies/claudes/internal/picker"
+	"github.com/timdavies/claudes/internal/pinned"
 	"github.com/timdavies/claudes/internal/session"
 	"github.com/timdavies/claudes/internal/tmux"
 )
@@ -27,40 +28,12 @@ var startCmd = &cobra.Command{
 			return err
 		}
 
-		var name string
-		if len(args) == 1 {
-			name = args[0]
-		} else {
-			// Picker over paused-only candidates.
-			liveInfos, err := client.List()
-			if err != nil {
-				return err
-			}
-			live := map[string]bool{}
-			for _, i := range liveInfos {
-				live[session.DisplayName(cfg.Prefix, i.Name)] = true
-			}
-			var paused []session.Session
-			for n, e := range reg.All() {
-				if live[n] {
-					continue
-				}
-				paused = append(paused, session.Session{
-					Name: n, Project: e.Project, Model: e.Model, Dir: e.Dir,
-					Status: session.StatusPaused, Pinned: true,
-				})
-			}
-			if len(paused) == 0 {
-				return fmt.Errorf("no paused agents to start")
-			}
-			chosen, err := picker.Pick(paused)
-			if err != nil {
-				if errors.Is(err, picker.ErrCancelled) {
-					return nil
-				}
-				return err
-			}
-			name = chosen.Name
+		name, err := resolvePausedName(client, cfg, reg, args)
+		if err != nil {
+			return err
+		}
+		if name == "" {
+			return nil // picker cancelled
 		}
 
 		full := session.FullName(cfg.Prefix, name)
@@ -73,6 +46,44 @@ var startCmd = &cobra.Command{
 		fmt.Println(name)
 		return nil
 	},
+}
+
+// resolvePausedName picks the paused pinned agent to act on: the explicit name
+// argument if given, otherwise a picker over paused-only candidates. Returns an
+// empty name (nil error) when the picker is cancelled.
+func resolvePausedName(client *tmux.Client, cfg *config.Config, reg *pinned.Registry, args []string) (string, error) {
+	if len(args) == 1 {
+		return args[0], nil
+	}
+	liveInfos, err := client.List()
+	if err != nil {
+		return "", err
+	}
+	live := map[string]bool{}
+	for _, i := range liveInfos {
+		live[session.DisplayName(cfg.Prefix, i.Name)] = true
+	}
+	var paused []session.Session
+	for name, entry := range reg.All() {
+		if live[name] {
+			continue
+		}
+		paused = append(paused, session.Session{
+			Name: name, Project: entry.Project, Model: entry.Model, Dir: entry.Dir,
+			Status: session.StatusPaused, Pinned: true,
+		})
+	}
+	if len(paused) == 0 {
+		return "", fmt.Errorf("no paused agents to start")
+	}
+	chosen, err := picker.Pick(paused)
+	if err != nil {
+		if errors.Is(err, picker.ErrCancelled) {
+			return "", nil
+		}
+		return "", err
+	}
+	return chosen.Name, nil
 }
 
 // resurrectPin spawns a fresh tmux session for a paused pinned agent using
