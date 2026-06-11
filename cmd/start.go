@@ -70,7 +70,7 @@ func resolvePausedName(client *tmux.Client, cfg *config.Config, reg *pinned.Regi
 		}
 		paused = append(paused, session.Session{
 			Name: name, Project: entry.Project, Model: entry.Model, Dir: entry.Dir,
-			Status: session.StatusPaused, Pinned: true,
+			Group: entry.Group, Status: session.StatusPaused, Pinned: true,
 		})
 	}
 	if len(paused) == 0 {
@@ -104,6 +104,7 @@ func resurrectPin(client *tmux.Client, cfg *config.Config, name string, openTab 
 		Project:     entry.Project,
 		Dir:         entry.Dir,
 		Model:       entry.Model,
+		Group:       entry.Group,
 		DefaultArgs: append([]string(nil), entry.DefaultArgs...),
 		Hooks:       cfg.Hooks,
 		StopTimeout: cfg.StopTimeout,

@@ -21,6 +21,7 @@ type Entry struct {
 	Project         string   `json:"project"`
 	Model           string   `json:"model"`
 	Dir             string   `json:"dir"`
+	Group           string   `json:"group,omitempty"`
 	DefaultArgs     []string `json:"default_args"`
 	PassthroughArgs []string `json:"passthrough_args"`
 	PinnedAt        string   `json:"pinned_at"`

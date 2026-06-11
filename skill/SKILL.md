@@ -32,6 +32,8 @@ For visual layout (windows, workspaces, panes, browsers, notifications), use the
 | Graceful stop | `claudes stop <name>` (sends `/exit`, waits, then kills) |
 | Force kill | `claudes kill <name>` (alias for `stop --force`) |
 | Pick model | `claudes new ... --model <name>` (or `--haiku`/`--sonnet`/`--opus` shortcuts) |
+| Group agents in `ls` | `claudes new --group <g> ...` at create time, or `claudes group <g> [name...]` to move existing agents (`default` ungroups) |
+| Pin/resurrect agents | `claudes pin <name>` (survives claude exit), `claudes start <name>` (resurrect in a tab), `claudes resume <name>` (resurrect in background, no tab), `claudes unpin <name>` |
 | Manage projects | `claudes project {list,add,rm,show}` |
 | Read/write top-level config | `claudes config {show,get,set}` |
 | Manage the daemon | `claudes daemon {status,start,stop,logs}` |
@@ -100,6 +102,10 @@ claudes tasks ls                                        # plain list; `claudes t
 - **Identity** (who created/claimed) is the current session name (same as `claudes whoami`). From a plain shell, pass `--as <name>`; humans can create/complete but not claim.
 - **Report-back**: `complete` messages the task's creating agent via `claudes write` (skipped when the creator is a human or no longer running).
 - **Completing** with no id picks your single claimed task; if you have several, pass the id. The dashboard's `x` key completes without a note — use the CLI `--result` to attach one.
+
+## Agent groups
+
+Every agent belongs to a group; the default group is implicit and renders flush at the top of `claudes ls` with no header. Any other group (e.g. `review`, `background`) gets its own labelled section below, so related agents cluster together. Set a group at create time with `claudes new --group review`, or move agents later with `claudes group review one two three`. `claudes group default <name>` (or `claudes group "" <name>`) drops an agent back to the top group. The group lives in the session env for live agents and in the pin registry for paused ones, so it survives refreshes and resurrection.
 
 ## Gotchas
 

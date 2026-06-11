@@ -44,6 +44,7 @@ var pinCmd = &cobra.Command{
 			Project:         env["CLAUDES_PROJECT"],
 			Model:           env["CLAUDES_MODEL"],
 			Dir:             env["CLAUDES_DIR"],
+			Group:           session.NormalizeGroup(env["CLAUDES_GROUP"]),
 			DefaultArgs:     decodeJSONStrings(env["CLAUDES_DEFAULT_ARGS"]),
 			PassthroughArgs: decodeJSONStrings(env["CLAUDES_PASSTHROUGH"]),
 		}
@@ -132,6 +133,7 @@ func pinLiveAgent(client *tmux.Client, cfg *config.Config, displayName string,
 		Project:         resolved.Project,
 		Model:           resolved.Model,
 		Dir:             resolved.Dir,
+		Group:           resolved.Group,
 		DefaultArgs:     append([]string(nil), resolved.DefaultArgs...),
 		PassthroughArgs: append([]string(nil), passthrough...),
 	}

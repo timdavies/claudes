@@ -21,6 +21,7 @@ type agentRow struct {
 	Status      session.Status
 	Dir         string
 	Description string
+	Group       string
 	Pinned      bool
 	HasTab      bool
 	TabSID      string
@@ -45,11 +46,20 @@ func collectSessions(client *tmux.Client, cfg *config.Config) []session.Session 
 			}
 			sessions = append(sessions, session.Session{
 				Name: name, Project: e.Project, Model: e.Model, Dir: e.Dir,
-				Status: session.StatusPaused, Pinned: true,
+				Group: e.Group, Status: session.StatusPaused, Pinned: true,
 			})
 		}
 	}
-	sort.Slice(sessions, func(i, j int) bool { return sessions[i].Name < sessions[j].Name })
+	// Group-major ordering so `claudes ls` and the TUI render contiguous
+	// groups: the default group ("") sorts first, then groups alphabetically,
+	// and agents by name within each. Keeping the slice itself grouped is what
+	// lets the TUI keep treating the cursor as a plain row index.
+	sort.Slice(sessions, func(i, j int) bool {
+		if sessions[i].Group != sessions[j].Group {
+			return sessions[i].Group < sessions[j].Group
+		}
+		return sessions[i].Name < sessions[j].Name
+	})
 	return sessions
 }
 
@@ -103,6 +113,7 @@ func loadAgentRows(client *tmux.Client, cfg *config.Config) []agentRow {
 			Status:      s.Status,
 			Dir:         s.Dir,
 			Description: s.Description,
+			Group:       s.Group,
 			Pinned:      s.Pinned,
 			HasTab:      has,
 			TabSID:      sid,
@@ -120,6 +131,7 @@ var (
 	cardProject = lipgloss.NewStyle().Foreground(lipgloss.Color("6"))  // cyan
 	cardMeta    = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))  // dim
 	cardCursor  = lipgloss.NewStyle().Foreground(lipgloss.Color("14")).Bold(true)
+	cardGroup   = lipgloss.NewStyle().Foreground(lipgloss.Color("11")).Bold(true) // yellow
 )
 
 // statusColor is the rail color for a status: it's the only place state is
@@ -156,7 +168,29 @@ func renderAgents(rows []agentRow, cursor, width int) string {
 	}
 
 	blocks := make([]string, len(rows))
+	prevGroup, started := "", false
 	for i, r := range rows {
+		// Emit a header whenever the group changes. Rows are pre-sorted
+		// group-major, so each group's header appears exactly once, above its
+		// first agent. The default group ("") is headerless — it just sits at
+		// the top, matching how ungrouped agents have always rendered.
+		var header string
+		if r.Group != prevGroup || !started {
+			if r.Group != "" {
+				label := cardGroup.Render(r.Group)
+				if started {
+					header = "\n" + label + "\n" // blank-ish separator before later groups
+				} else {
+					header = label + "\n"
+				}
+				if interactive {
+					header = indentLines(header, "  ")
+				}
+			}
+			prevGroup = r.Group
+			started = true
+		}
+
 		name := nameCell(r)
 		nameStyle := cardName
 		if r.Status == session.StatusPaused {
@@ -194,9 +228,21 @@ func renderAgents(rows []agentRow, cursor, width int) string {
 			Border(lipgloss.ThickBorder(), false, false, false, true).
 			BorderForeground(statusColor(r.Status)).
 			PaddingLeft(1)
-		blocks[i] = rail.Render(line1 + "\n" + line2)
+		blocks[i] = header + rail.Render(line1 + "\n" + line2)
 	}
 	return strings.Join(blocks, "\n") + "\n"
+}
+
+// indentLines prefixes every non-empty line of s with prefix. Empty lines are
+// left bare so blank separators between groups stay blank.
+func indentLines(s, prefix string) string {
+	lines := strings.Split(s, "\n")
+	for i, line := range lines {
+		if line != "" {
+			lines[i] = prefix + line
+		}
+	}
+	return strings.Join(lines, "\n")
 }
 
 // nameCell is the name plus a trailing pin marker when pinned.

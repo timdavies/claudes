@@ -52,6 +52,7 @@ type Resolved struct {
 	Project     string // empty if none
 	Dir         string
 	Model       string
+	Group       string // agent group; "" means the default group
 	DefaultArgs []string
 	Hooks       Hooks
 	// from global

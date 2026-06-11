@@ -28,6 +28,7 @@ type Session struct {
 	Dir         string
 	Status      Status
 	Description string // ambient summary written by the daemon, may be empty
+	Group       string // agent group; "" means the default group
 	Pinned      bool
 	Raw         tmux.Info
 }
@@ -45,6 +46,22 @@ func FullName(prefix, name string) string {
 // DisplayName strips the prefix.
 func DisplayName(prefix, name string) string {
 	return strings.TrimPrefix(name, prefix)
+}
+
+// DefaultGroup is the label shown for the implicit group that ungrouped agents
+// belong to. Internally the default group is the empty string; this is only for
+// display and for matching a user-typed "default".
+const DefaultGroup = "default"
+
+// NormalizeGroup canonicalizes a group name: trims whitespace and folds the
+// literal "default" (any case) back to "" so the implicit group has a single
+// internal representation regardless of how the user spelled it.
+func NormalizeGroup(group string) string {
+	group = strings.TrimSpace(group)
+	if strings.EqualFold(group, DefaultGroup) {
+		return ""
+	}
+	return group
 }
 
 // List enumerates claudes-managed sessions, enriched with project/status.
@@ -85,6 +102,7 @@ func List(client *tmux.Client, cfg *config.Config) ([]Session, error) {
 		if env["@claudes-pinned"] == "true" {
 			s.Pinned = true
 		}
+		s.Group = NormalizeGroup(env["CLAUDES_GROUP"])
 		out = append(out, s)
 	}
 	return out, nil

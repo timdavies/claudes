@@ -27,6 +27,7 @@ var (
 	newOpus    bool
 	newHaiku   bool
 	newPin     bool
+	newGroup   string
 )
 
 var newCmd = &cobra.Command{
@@ -74,6 +75,7 @@ var newCmd = &cobra.Command{
 		case newOpus:
 			resolved.Model = resolved.Models["opus"]
 		}
+		resolved.Group = session.NormalizeGroup(newGroup)
 
 		// Name
 		var displayName string
@@ -150,6 +152,7 @@ func spawnSession(client *tmux.Client, cfg *config.Config, resolved config.Resol
 		"CLAUDES_NAME=" + displayName,
 		"CLAUDES_PROJECT=" + resolved.Project,
 		"CLAUDES_MODEL=" + resolved.Model,
+		"CLAUDES_GROUP=" + resolved.Group,
 		"CLAUDES_DIR=" + resolved.Dir,
 		"CLAUDES_DEFAULT_ARGS=" + mustJSON(resolved.DefaultArgs),
 		"CLAUDES_PASSTHROUGH=" + mustJSON(passthrough),
@@ -184,6 +187,7 @@ func init() {
 	newCmd.Flags().BoolVar(&newSonnet, "sonnet", false, "Use sonnet model")
 	newCmd.Flags().BoolVar(&newOpus, "opus", false, "Use opus model")
 	newCmd.Flags().BoolVar(&newPin, "pin", false, "Pin the agent — survives claude exit, resurrect with 'claudes start'")
+	newCmd.Flags().StringVar(&newGroup, "group", "", "Group the agent belongs to in 'claudes ls' (default group if empty)")
 	rootCmd.AddCommand(newCmd)
 }
 
