@@ -185,26 +185,6 @@ func (m tuiModel) View() string {
 	return b.String()
 }
 
-// visibleWidth approximates display width by stripping ANSI escapes. Good
-// enough for our cells (no double-width chars beyond the pin emoji, which
-// runewidth handles via lipgloss internally; rough fallback here).
-func visibleWidth(s string) int {
-	// Strip CSI sequences \x1b[...m.
-	out := s
-	for {
-		i := strings.Index(out, "\x1b[")
-		if i < 0 {
-			break
-		}
-		end := strings.IndexByte(out[i:], 'm')
-		if end < 0 {
-			break
-		}
-		out = out[:i] + out[i+end+1:]
-	}
-	return len([]rune(out))
-}
-
 // resolveTab finds the backend tab for r, falling back through:
 //  1. the registry's session_id (if HasTab) — verified live via mc.List;
 //  2. a live tab whose Title matches r.Name (set by SetAppearance + tmux's

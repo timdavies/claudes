@@ -116,101 +116,87 @@ func loadAgentRows(client *tmux.Client, cfg *config.Config) []agentRow {
 var (
 	cardName       = lipgloss.NewStyle().Bold(true)
 	cardNamePaused = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("8"))
-	cardModel      = lipgloss.NewStyle().Foreground(lipgloss.Color("13")) // magenta
-	cardProject    = lipgloss.NewStyle().Foreground(lipgloss.Color("6"))  // cyan
-	cardMeta       = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))  // dim
-	cardDesc       = lipgloss.NewStyle().Foreground(lipgloss.Color("7")).Italic(true)
-	cardCursor     = lipgloss.NewStyle().Foreground(lipgloss.Color("12")).Bold(true)
-	cardTabOn      = lipgloss.NewStyle().Foreground(lipgloss.Color("10")) // green
+	cardModel   = lipgloss.NewStyle().Foreground(lipgloss.Color("13")) // magenta
+	cardProject = lipgloss.NewStyle().Foreground(lipgloss.Color("6"))  // cyan
+	cardMeta    = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))  // dim
+	cardCursor  = lipgloss.NewStyle().Foreground(lipgloss.Color("14")).Bold(true)
 )
 
-// statusDot returns the leading glyph, colored by status. Hollow for the
-// dead/parked states (stopped, paused), filled for the live ones.
-func statusDot(s session.Status) string {
+// statusColor is the rail color for a status: it's the only place state is
+// surfaced now that the standalone dot is gone.
+func statusColor(s session.Status) lipgloss.Color {
 	switch s {
 	case session.StatusRunning:
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("10")).Render("●") // green
+		return lipgloss.Color("10") // green
 	case session.StatusWaiting:
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("11")).Render("●") // yellow
+		return lipgloss.Color("11") // yellow
 	case session.StatusIdle:
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("12")).Render("●") // blue
+		return lipgloss.Color("12") // blue
 	case session.StatusStopped:
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Render("○") // red
-	case session.StatusPaused:
-		return cardMeta.Render("○")
-	default:
-		return cardMeta.Render("○")
+		return lipgloss.Color("9") // red
+	default: // paused / unknown
+		return lipgloss.Color("8") // dim
 	}
 }
 
-func statusWord(s session.Status) string {
-	style := cardMeta
-	switch s {
-	case session.StatusRunning:
-		style = lipgloss.NewStyle().Foreground(lipgloss.Color("10"))
-	case session.StatusWaiting:
-		style = lipgloss.NewStyle().Foreground(lipgloss.Color("11"))
-	case session.StatusIdle:
-		style = lipgloss.NewStyle().Foreground(lipgloss.Color("12"))
-	case session.StatusStopped:
-		style = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))
-	}
-	return style.Render(string(s))
-}
-
-// renderAgents renders the whole list as multi-line cards. cursor is the index
-// of the selected row (-1 for none, e.g. non-interactive `ls`). width is the
-// terminal column count used to truncate the description/dir lines.
+// renderAgents renders the list as tight two-line cards, each fronted by a
+// status-colored left rail. cursor is the selected index (-1 for none, e.g.
+// non-interactive `ls`); width truncates the second line.
 func renderAgents(rows []agentRow, cursor, width int) string {
 	if width <= 0 {
 		width = 80
 	}
+	interactive := cursor >= 0
+
 	nameW := 0
 	for _, r := range rows {
-		if w := visibleWidth(nameCell(r)); w > nameW {
+		if w := lipgloss.Width(nameCell(r)); w > nameW {
 			nameW = w
 		}
 	}
 
-	var b strings.Builder
+	blocks := make([]string, len(rows))
 	for i, r := range rows {
-		if i > 0 {
-			b.WriteString("\n")
-		}
-
-		// Line 1: cursor + dot + name + model + project.
-		prefix := "  "
-		if i == cursor {
-			prefix = cardCursor.Render("▸") + " "
-		}
 		name := nameCell(r)
 		nameStyle := cardName
 		if r.Status == session.StatusPaused {
 			nameStyle = cardNamePaused
 		}
-		namePadded := nameStyle.Render(name) + strings.Repeat(" ", nameW-visibleWidth(name))
-		line1 := prefix + statusDot(r.Status) + " " + namePadded + "   " + cardModel.Render(dash(r.Model))
+		namePadded := nameStyle.Render(name) + strings.Repeat(" ", nameW-lipgloss.Width(name))
+
+		// Line 1: name · model · project.
+		line1 := namePadded + "  " + cardModel.Render(dash(r.Model))
 		if r.Project != "" {
-			line1 += "   " + cardProject.Render(r.Project)
+			line1 += "  " + cardProject.Render(r.Project)
 		}
-		b.WriteString(line1 + "\n")
 
-		// Line 2: status · tab · dir (indented under the name).
-		meta := []string{statusWord(r.Status)}
-		if r.HasTab {
-			meta = append(meta, cardTabOn.Render("tab"))
-		} else {
-			meta = append(meta, cardMeta.Render("no tab"))
-		}
-		meta = append(meta, cardMeta.Render(truncate(tildify(r.Dir), max(10, width-20))))
-		b.WriteString("    " + strings.Join(meta, cardMeta.Render("  ·  ")) + "\n")
-
-		// Line 3: description, only when the daemon has written one.
+		// Line 2: dir, plus the daemon's description when present.
+		meta := tildify(r.Dir)
 		if r.Description != "" {
-			b.WriteString("    " + cardDesc.Render(truncate(r.Description, max(10, width-5))) + "\n")
+			meta += "  ·  " + r.Description
 		}
+		budget := width - 4
+		if interactive {
+			budget -= 2
+		}
+		line2 := cardMeta.Render(truncate(meta, max(10, budget)))
+
+		if interactive {
+			gutter := "  "
+			if i == cursor {
+				gutter = cardCursor.Render("▸") + " "
+			}
+			line1 = gutter + line1
+			line2 = "  " + line2
+		}
+
+		rail := lipgloss.NewStyle().
+			Border(lipgloss.ThickBorder(), false, false, false, true).
+			BorderForeground(statusColor(r.Status)).
+			PaddingLeft(1)
+		blocks[i] = rail.Render(line1 + "\n" + line2)
 	}
-	return b.String()
+	return strings.Join(blocks, "\n") + "\n"
 }
 
 // nameCell is the name plus a trailing pin marker when pinned.
