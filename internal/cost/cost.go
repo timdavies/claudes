@@ -23,18 +23,26 @@ import (
 	"strings"
 )
 
-// rate is per-million-token pricing in USD for one model tier.
+// rate is per-million-token base pricing in USD for one model tier. The cache
+// rates are universal multiples of the input rate (cache read = 0.1×, 5-minute
+// cache write = 1.25×, 1-hour cache write = 2×), so we only store input/output
+// and derive the rest — this is how Anthropic prices every current tier.
 type rate struct {
-	in, out, cacheWrite, cacheRead float64
+	in, out float64
 }
 
+func (r rate) cacheRead() float64    { return 0.10 * r.in }
+func (r rate) cacheWrite5m() float64 { return 1.25 * r.in }
+func (r rate) cacheWrite1h() float64 { return 2.00 * r.in }
+
 // pricing maps a model tier (matched as a substring of the model id) to its
-// rate. Public list prices as of 2026; update here when they change. Order
-// matters only in that the first substring match wins, so keep tiers distinct.
+// base rate. Published list prices (platform.claude.com/docs/en/about-claude/pricing);
+// update here when they change. First substring match wins, so keep tiers distinct.
 var pricing = map[string]rate{
-	"opus":   {in: 15, out: 75, cacheWrite: 18.75, cacheRead: 1.50},
-	"sonnet": {in: 3, out: 15, cacheWrite: 3.75, cacheRead: 0.30},
-	"haiku":  {in: 0.80, out: 4, cacheWrite: 1.00, cacheRead: 0.08},
+	"opus":   {in: 5, out: 25},
+	"sonnet": {in: 3, out: 15},
+	"haiku":  {in: 1, out: 5},
+	"fable":  {in: 10, out: 50},
 }
 
 // rateFor returns the rate for a model id, falling back to opus (the default
@@ -58,6 +66,13 @@ type transcriptLine struct {
 			OutputTokens        int `json:"output_tokens"`
 			CacheCreationTokens int `json:"cache_creation_input_tokens"`
 			CacheReadTokens     int `json:"cache_read_input_tokens"`
+			// Breakdown of cache_creation_input_tokens by TTL; the two price
+			// differently (5m = 1.25× input, 1h = 2× input). Absent on older
+			// transcripts, where we fall back to the 5m rate.
+			CacheCreation *struct {
+				Ephemeral5m int `json:"ephemeral_5m_input_tokens"`
+				Ephemeral1h int `json:"ephemeral_1h_input_tokens"`
+			} `json:"cache_creation"`
 		} `json:"usage"`
 	} `json:"message"`
 }
@@ -89,7 +104,17 @@ func TranscriptPath(dir, sessionID string) string {
 	if err != nil {
 		return ""
 	}
-	return filepath.Join(home, ".claude", "projects", EncodeDir(dir), sessionID+".jsonl")
+	return filepath.Join(home, ".claude", "projects", EncodeDir(normalizeDir(dir)), sessionID+".jsonl")
+}
+
+// normalizeDir matches the path Claude Code encodes: symlinks resolved (macOS
+// /var → /private/var) and the trailing slash stripped. EvalSymlinks is
+// best-effort — a dir that no longer exists falls back to a cleaned path.
+func normalizeDir(dir string) string {
+	if resolved, err := filepath.EvalSymlinks(dir); err == nil {
+		return resolved
+	}
+	return filepath.Clean(dir)
 }
 
 // SessionUSD parses the transcript and returns the estimated total cost in USD.
@@ -131,8 +156,15 @@ func usdFromReader(r io.Reader) (float64, error) {
 		r := rateFor(line.Message.Model)
 		total += float64(u.InputTokens)*r.in +
 			float64(u.OutputTokens)*r.out +
-			float64(u.CacheCreationTokens)*r.cacheWrite +
-			float64(u.CacheReadTokens)*r.cacheRead
+			float64(u.CacheReadTokens)*r.cacheRead()
+		// Price cache creation by TTL when the breakdown is present; otherwise
+		// charge the whole bucket at the 5-minute rate.
+		if u.CacheCreation != nil {
+			total += float64(u.CacheCreation.Ephemeral5m)*r.cacheWrite5m() +
+				float64(u.CacheCreation.Ephemeral1h)*r.cacheWrite1h()
+		} else {
+			total += float64(u.CacheCreationTokens) * r.cacheWrite5m()
+		}
 	}
 	return total / 1e6, sc.Err()
 }
