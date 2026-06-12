@@ -129,12 +129,11 @@ func loadAgentRows(client *tmux.Client, cfg *config.Config) []agentRow {
 var (
 	cardName       = lipgloss.NewStyle().Bold(true)
 	cardNamePaused = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("8"))
-	cardModel   = lipgloss.NewStyle().Foreground(lipgloss.Color("13")) // magenta
-	cardProject = lipgloss.NewStyle().Foreground(lipgloss.Color("6"))  // cyan
-	cardMeta    = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))  // dim
-	cardCursor  = lipgloss.NewStyle().Foreground(lipgloss.Color("14")).Bold(true)
-	cardGroup   = lipgloss.NewStyle().Foreground(lipgloss.Color("11")).Bold(true) // yellow
-	cardCost    = lipgloss.NewStyle().Foreground(lipgloss.Color("10"))            // green
+	cardModel      = lipgloss.NewStyle().Foreground(lipgloss.Color("13")) // magenta
+	cardMeta       = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))  // dim
+	cardCursor     = lipgloss.NewStyle().Foreground(lipgloss.Color("14")).Bold(true)
+	cardGroup      = lipgloss.NewStyle().Foreground(lipgloss.Color("11")).Bold(true) // yellow
+	cardCost       = lipgloss.NewStyle().Foreground(lipgloss.Color("10"))            // green
 )
 
 // statusColor is the rail color for a status: it's the only place state is
@@ -201,40 +200,45 @@ func renderAgents(rows []agentRow, cursor, width int) string {
 		}
 		namePadded := nameStyle.Render(name) + strings.Repeat(" ", nameW-lipgloss.Width(name))
 
-		// Line 1: name · model · project · cost.
-		line1 := namePadded + "  " + cardModel.Render(dash(r.Model))
-		if r.Project != "" {
-			line1 += "  " + cardProject.Render(r.Project)
-		}
+		// Line 1 left cluster: name · model · cost.
+		left := namePadded + "  " + cardModel.Render(dash(r.Model))
 		if r.Cost != "" && r.Cost != "0.00" {
-			line1 += "  " + cardCost.Render("$"+r.Cost)
+			left += "  " + cardCost.Render("$"+r.Cost)
 		}
-
-		// Line 2: dir, plus the daemon's description when present.
-		meta := tildify(r.Dir)
-		if r.Description != "" {
-			meta += "  ·  " + r.Description
-		}
-		budget := width - 4
+		indent := ""
 		if interactive {
-			budget -= 2
-		}
-		line2 := cardMeta.Render(truncate(meta, max(10, budget)))
-
-		if interactive {
-			gutter := "  "
+			indent = "  "
 			if i == cursor {
-				gutter = cardCursor.Render("▸") + " "
+				indent = cardCursor.Render("▸") + " "
 			}
-			line1 = gutter + line1
-			line2 = "  " + line2
+		}
+		left = indent + left
+
+		// Content fills the card to the terminal width, minus the rail's
+		// border + padding (2 cols). The working dir is right-aligned on line 1
+		// via a spacer; it's truncated first so a long path can't crowd it out.
+		contentW := max(20, width-2)
+		leftW := lipgloss.Width(left)
+		dirStr := truncate(tildify(r.Dir), max(4, contentW-leftW-1))
+		dirRendered := cardMeta.Render(dirStr)
+		spacer := max(1, contentW-leftW-lipgloss.Width(dirRendered))
+		line1 := left + strings.Repeat(" ", spacer) + dirRendered
+
+		// Line 2: the daemon's description only (may be empty).
+		line2 := ""
+		if r.Description != "" {
+			descIndent := ""
+			if interactive {
+				descIndent = "  "
+			}
+			line2 = descIndent + cardMeta.Render(truncate(r.Description, max(10, contentW-lipgloss.Width(descIndent))))
 		}
 
 		rail := lipgloss.NewStyle().
 			Border(lipgloss.ThickBorder(), false, false, false, true).
 			BorderForeground(statusColor(r.Status)).
 			PaddingLeft(1)
-		blocks[i] = header + rail.Render(line1 + "\n" + line2)
+		blocks[i] = header + rail.Render(line1+"\n"+line2)
 	}
 	return strings.Join(blocks, "\n") + "\n"
 }
