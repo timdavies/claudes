@@ -11,7 +11,11 @@ package cost
 
 import (
 	"encoding/json"
+	"os"
 	"os/exec"
+	"path/filepath"
+	"strings"
+	"time"
 )
 
 // ccusageOutput is the slice of `ccusage session --json` we consume.
@@ -58,4 +62,80 @@ func runCCUsage() ([]byte, error) {
 		return nil, err
 	}
 	return exec.Command(npx, "-y", "ccusage", "session", "--json").Output()
+}
+
+// EncodeDir maps a working directory to the project-dir name Claude Code uses
+// under ~/.claude/projects: every rune that isn't a letter or digit becomes
+// '-' (no collapsing — "/x/.claude" → "-x--claude").
+func EncodeDir(dir string) string {
+	var b strings.Builder
+	b.Grow(len(dir))
+	for _, r := range dir {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') {
+			b.WriteRune(r)
+		} else {
+			b.WriteByte('-')
+		}
+	}
+	return b.String()
+}
+
+// normalizeDir matches what Claude Code encodes: symlinks resolved (macOS
+// /var → /private/var) and the trailing slash stripped. Best-effort — a missing
+// dir falls back to a cleaned path.
+func normalizeDir(dir string) string {
+	if resolved, err := filepath.EvalSymlinks(dir); err == nil {
+		return resolved
+	}
+	return filepath.Clean(dir)
+}
+
+// ProjectDir returns the ~/.claude/projects subdirectory Claude Code writes a
+// cwd's transcripts into, or "" when the home dir or cwd is unavailable.
+func ProjectDir(cwd string) string {
+	if cwd == "" {
+		return ""
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(home, ".claude", "projects", EncodeDir(normalizeDir(cwd)))
+}
+
+// ResolveSessionID best-effort recovers the Claude Code session UUID for a live
+// agent that claudes didn't stamp (created before --session-id existed). It
+// returns the newest transcript in cwd's project dir whose UUID isn't already
+// in `claimed`, or "" if none. This is a heuristic: exact when there's one
+// agent per directory, best-effort when several share one (each claims a
+// distinct transcript so they don't all collapse onto the same cost).
+func ResolveSessionID(cwd string, claimed map[string]bool) string {
+	dir := ProjectDir(cwd)
+	if dir == "" {
+		return ""
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return ""
+	}
+	var bestID string
+	var bestMod time.Time
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".jsonl") {
+			continue
+		}
+		id := strings.TrimSuffix(e.Name(), ".jsonl")
+		if claimed[id] {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil {
+			continue
+		}
+		if info.ModTime().After(bestMod) {
+			bestMod = info.ModTime()
+			bestID = id
+		}
+	}
+	return bestID
 }

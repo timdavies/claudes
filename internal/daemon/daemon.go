@@ -285,21 +285,43 @@ func Run(cfg *config.Config) error {
 			}
 			tabReconcile(live)
 		}
-		// Refresh cost via ccusage (one call covers every session), then stamp
+		// Resolve each session's Claude Code UUID, backfilling sessions claudes
+		// didn't stamp (created before --session-id) from the newest transcript
+		// in their cwd and persisting it so the next tick is a direct lookup.
+		ids := map[string]string{} // session name -> UUID
+		claimed := map[string]bool{}
+		for _, s := range sessions {
+			if s.SessionID != "" {
+				ids[s.Name] = s.SessionID
+				claimed[s.SessionID] = true
+			}
+		}
+		for _, s := range sessions {
+			if s.SessionID != "" {
+				continue
+			}
+			id := cost.ResolveSessionID(s.Dir, claimed)
+			if id == "" {
+				continue
+			}
+			claimed[id] = true
+			ids[s.Name] = id
+			full := session.FullName(cfg.Prefix, s.Name)
+			if err := client.SetSessionEnv(full, "CLAUDES_SESSION_ID", id); err != nil {
+				logf("backfill session id %s: %v", s.Name, err)
+			}
+		}
+
+		// Refresh cost via ccusage (one call covers every session) and stamp
 		// each session's figure into the env — like the description — so
 		// `claudes ls` can show it. Only write when the value changed to avoid
-		// needless env churn. ccusage failures are logged once and skipped.
-		// Skip the call entirely when no session carries a UUID to map against
-		// (e.g. only pre-feature sessions) so we don't spawn ccusage for nothing.
-		if anyHasSessionID(sessions) {
+		// needless env churn. Skip entirely when nothing maps to a UUID.
+		if len(ids) > 0 {
 			if costs, err := cost.SessionCosts(); err != nil {
 				logf("cost: %v", err)
 			} else {
 				for _, s := range sessions {
-					if s.SessionID == "" {
-						continue
-					}
-					usd, ok := costs[s.SessionID]
+					usd, ok := costs[ids[s.Name]]
 					if !ok {
 						continue
 					}
@@ -404,17 +426,6 @@ func writeHeartbeat(dir string) {
 
 func logf(format string, args ...any) {
 	fmt.Fprintf(os.Stderr, "%s "+format+"\n", append([]any{time.Now().Format("15:04:05")}, args...)...)
-}
-
-// anyHasSessionID reports whether at least one session carries a Claude Code
-// UUID — i.e. whether there's anything for ccusage to map a cost onto.
-func anyHasSessionID(sessions []session.Session) bool {
-	for _, s := range sessions {
-		if s.SessionID != "" {
-			return true
-		}
-	}
-	return false
 }
 
 func hash(s string) string {
