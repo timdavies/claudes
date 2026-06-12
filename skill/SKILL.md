@@ -28,6 +28,7 @@ For visual layout (windows, workspaces, panes, browsers, notifications), use the
 | Write a message + Enter | `claudes write <name> "<message>"` |
 | Write raw keys (no Enter) | `claudes write --keys <name> <key>...` (e.g. `Escape`, `Up`, `C-c`, `BSpace`) |
 | Read recent output | `claudes read <name>` (default 50 lines; `-n N`, `-f` to follow) |
+| Report your own activity/state | `claudes status "<activity>" [--state working\|waiting\|blocked\|done]` (run from inside the session; `--clear` to reset) |
 | Rename a session | `claudes rename <old> <new>` (or `claudes rename <new>` for picker) |
 | Graceful stop | `claudes stop <name>` (sends `/exit`, waits, then kills) |
 | Force kill | `claudes kill <name>` (alias for `stop --force`) |
@@ -88,6 +89,22 @@ claudes write bug-fix-1 "read the failing spec and propose a fix"
 claudes write --keys my-session Escape
 claudes write my-session "retry the request"
 ```
+
+## Self-reporting status
+
+By default the daemon *guesses* each session's description by summarizing its pane every minute, and the rail color in `claudes ls` is always blue ("idle") for any live agent — it can't tell working from blocked. An agent can override both by reporting for itself:
+
+```
+claudes status "scraping the firm homepage"             # set the activity line
+claudes status --state blocked "waiting on CI to go green"  # activity + state
+claudes status --state working                          # just the state
+claudes status --clear                                  # hand control back to the daemon
+```
+
+- Run it **from inside the session** — it targets the current session (same resolution as `claudes whoami`), no name argument.
+- A self-reported activity takes precedence over the daemon's ambient summary in `claudes ls`/the dashboard; the daemon keeps refreshing underneath and reappears once you `--clear`.
+- The `--state` keyword tints the left rail: `working`→green, `waiting`/`blocked`→yellow, `done`/`idle`→blue. Any other word still shows as a `[chip]` but doesn't change the color.
+- Good practice for long-running agents: call it when you start a phase ("running migration"), when you get stuck (`--state blocked`), and when you finish (`--state done`). It's how a human glancing at `claudes ls` knows what each agent is up to without attaching.
 
 ## Cross-agent task queue
 

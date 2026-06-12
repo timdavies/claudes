@@ -21,6 +21,7 @@ type agentRow struct {
 	Status      session.Status
 	Dir         string
 	Description string
+	State       string
 	Group       string
 	Cost        string
 	Pinned      bool
@@ -112,13 +113,21 @@ func loadAgentRows(client *tmux.Client, cfg *config.Config) []agentRow {
 				_ = reg.Delete(s.Name)
 			}
 		}
+		// A self-reported activity (via `claudes status`) takes precedence over
+		// the daemon's ambient summary; the daemon keeps refreshing underneath
+		// and reappears once the agent clears its report.
+		desc := s.SelfReport
+		if desc == "" {
+			desc = s.Description
+		}
 		rows[i] = agentRow{
 			Name:        s.Name,
 			Project:     s.Project,
 			Model:       s.Model,
 			Status:      s.Status,
 			Dir:         s.Dir,
-			Description: s.Description,
+			Description: desc,
+			State:       s.State,
 			Group:       s.Group,
 			Cost:        s.Cost,
 			Pinned:      s.Pinned,
@@ -231,14 +240,21 @@ func renderAgents(rows []agentRow, cursor, width int) string {
 		spacer := max(1, contentW-leftW-lipgloss.Width(dirRendered))
 		line1 := left + strings.Repeat(" ", spacer) + dirRendered
 
-		// Line 2: the daemon's description only (may be empty).
+		// Line 2: the agent's self-reported activity (preferred) or the daemon's
+		// ambient summary. A self-reported state shows as a leading chip, tinted
+		// the same color as the rail so the two read as one signal.
 		line2 := ""
-		if r.Description != "" {
+		chip := ""
+		if r.State != "" {
+			chip = lipgloss.NewStyle().Foreground(statusColor(r.Status)).Bold(true).Render("["+r.State+"] ")
+		}
+		if r.Description != "" || chip != "" {
 			descIndent := ""
 			if interactive {
 				descIndent = "  "
 			}
-			line2 = descIndent + cardMeta.Render(truncate(r.Description, max(10, contentW-lipgloss.Width(descIndent))))
+			body := truncate(r.Description, max(10, contentW-lipgloss.Width(descIndent)-lipgloss.Width(chip)))
+			line2 = descIndent + chip + cardMeta.Render(body)
 		}
 
 		railColor := statusColor(r.Status)

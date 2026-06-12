@@ -28,6 +28,8 @@ type Session struct {
 	Dir         string
 	Status      Status
 	Description string // ambient summary written by the daemon, may be empty
+	SelfReport  string // activity the agent self-reported via `claudes status`, may be empty
+	State       string // self-reported state keyword (working/waiting/blocked/done), may be empty
 	Group       string // agent group; "" means the default group
 	SessionID   string // Claude Code session UUID (transcript filename stem)
 	Cost        string // estimated cost in USD, stamped by the daemon (e.g. "1.23")
@@ -89,9 +91,19 @@ func List(client *tmux.Client, cfg *config.Config) ([]Session, error) {
 			Dir:         in.Path,
 			Status:      classify(in),
 			Description: env["@claudes-description"],
+			SelfReport:  env["@claudes-self-description"],
+			State:       env["@claudes-state"],
 			SessionID:   env["CLAUDES_SESSION_ID"],
 			Cost:        env["@claudes-cost"],
 			Raw:         in,
+		}
+		// A self-reported state refines the rail color while the process is
+		// alive — it resolves the running/waiting/idle ambiguity classify()
+		// can't see. A dead process always wins (no "working" on a corpse).
+		if s.Status != StatusStopped {
+			if st, ok := statusForState(s.State); ok {
+				s.Status = st
+			}
 		}
 		if v := env["CLAUDES_PROJECT"]; v != "" {
 			s.Project = v
@@ -110,6 +122,21 @@ func List(client *tmux.Client, cfg *config.Config) ([]Session, error) {
 		out = append(out, s)
 	}
 	return out, nil
+}
+
+// statusForState maps an agent's self-reported state keyword onto a lifecycle
+// Status (so the rail color reflects it). Unknown words don't map — the state
+// text still shows, but the color falls back to the process-derived status.
+func statusForState(state string) (Status, bool) {
+	switch strings.ToLower(strings.TrimSpace(state)) {
+	case "working", "running":
+		return StatusRunning, true
+	case "waiting", "blocked":
+		return StatusWaiting, true
+	case "done", "idle":
+		return StatusIdle, true
+	}
+	return "", false
 }
 
 func classify(in tmux.Info) Status {
