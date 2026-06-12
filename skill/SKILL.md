@@ -49,7 +49,7 @@ A background daemon auto-spawns on first `claudes new`/`open`/`ls` and self-exit
 
 ## Cost tracking
 
-`claudes ls` shows an estimated cost per agent (e.g. `$12.47`) next to its model. At spawn, claudes assigns the Claude Code session UUID (`claude --session-id`), so the session's transcript path is deterministic. The same daemon tick parses that transcript, sums token usage × per-model pricing, and stamps the dollar figure into the session env (`@claudes-cost`). It's an estimate (the transcript stores tokens, not dollars) — accurate as long as the pricing table in `internal/cost` tracks current rates. Sessions created before this feature (no stamped UUID) show no cost. `$0.00` is suppressed.
+`claudes ls` shows the cost per agent (e.g. `$12.47`) next to its model. At spawn, claudes assigns the Claude Code session UUID (`claude --session-id`), and the daemon shells out to [ccusage](https://github.com/ryoppippi/ccusage) once per tick (`ccusage session --json`, or `npx ccusage` if it isn't installed globally), matching each session's `period` (the UUID) to its `totalCost` and stamping it into the session env (`@claudes-cost`). ccusage reads the same transcripts Claude Code writes and uses maintained pricing, so the figure matches Claude Code's own billing. No ccusage / no node → no cost shown (degrades quietly). Sessions created before this feature (no stamped UUID) show no cost; `$0.00` is suppressed.
 
 ## Writing input — important
 

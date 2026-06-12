@@ -234,10 +234,6 @@ func Run(cfg *config.Config) error {
 	client := tmux.New(cfg.TmuxSocket, cfg.TmuxConfig)
 	cache := newHashCache(hashesPath(dir))
 	cache.load()
-	// Per-session transcript mtime, so we only re-parse (and re-stamp) cost when
-	// the transcript has actually grown. In-memory only — a daemon restart just
-	// recomputes once. Keyed by session name.
-	costMtime := map[string]int64{}
 
 	tick := tickInterval()
 	mTick := tabTickInterval()
@@ -289,32 +285,29 @@ func Run(cfg *config.Config) error {
 			}
 			tabReconcile(live)
 		}
-		// Re-estimate cost for each session whose transcript has grown since
-		// last tick. Cheap stat gate keeps us off the JSONL when nothing's
-		// changed; cost is stamped into the env like the description so
-		// `claudes ls` can show it.
-		for _, s := range sessions {
-			if s.SessionID == "" {
-				continue
-			}
-			path := cost.TranscriptPath(s.Dir, s.SessionID)
-			fi, err := os.Stat(path)
-			if err != nil {
-				continue // transcript not written yet
-			}
-			if mt := fi.ModTime().UnixNano(); costMtime[s.Name] == mt {
-				continue
-			} else {
-				costMtime[s.Name] = mt
-			}
-			usd, err := cost.SessionUSD(s.Dir, s.SessionID)
-			if err != nil {
-				logf("cost %s: %v", s.Name, err)
-				continue
-			}
-			full := session.FullName(cfg.Prefix, s.Name)
-			if err := client.SetSessionEnv(full, "@claudes-cost", strconv.FormatFloat(usd, 'f', 2, 64)); err != nil {
-				logf("set cost %s: %v", s.Name, err)
+		// Refresh cost via ccusage (one call covers every session), then stamp
+		// each session's figure into the env — like the description — so
+		// `claudes ls` can show it. Only write when the value changed to avoid
+		// needless env churn. ccusage failures are logged once and skipped.
+		if costs, err := cost.SessionCosts(); err != nil {
+			logf("cost: %v", err)
+		} else {
+			for _, s := range sessions {
+				if s.SessionID == "" {
+					continue
+				}
+				usd, ok := costs[s.SessionID]
+				if !ok {
+					continue
+				}
+				formatted := strconv.FormatFloat(usd, 'f', 2, 64)
+				if formatted == s.Cost {
+					continue
+				}
+				full := session.FullName(cfg.Prefix, s.Name)
+				if err := client.SetSessionEnv(full, "@claudes-cost", formatted); err != nil {
+					logf("set cost %s: %v", s.Name, err)
+				}
 			}
 		}
 
