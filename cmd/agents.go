@@ -52,12 +52,17 @@ func collectSessions(client *tmux.Client, cfg *config.Config) []session.Session 
 		}
 	}
 	// Group-major ordering so `claudes ls` and the TUI render contiguous
-	// groups: the default group ("") sorts first, then groups alphabetically,
-	// and agents by name within each. Keeping the slice itself grouped is what
-	// lets the TUI keep treating the cursor as a plain row index.
+	// groups: the default group ("") sorts first, then groups alphabetically.
+	// Within a group, pinned agents float to the top (so the long-lived pinned
+	// agents — usually ungrouped — sit at the very top of the list), then by
+	// name. Keeping the slice grouped is what lets the TUI treat the cursor as a
+	// plain row index.
 	sort.Slice(sessions, func(i, j int) bool {
 		if sessions[i].Group != sessions[j].Group {
 			return sessions[i].Group < sessions[j].Group
+		}
+		if sessions[i].Pinned != sessions[j].Pinned {
+			return sessions[i].Pinned // pinned first
 		}
 		return sessions[i].Name < sessions[j].Name
 	})
@@ -132,8 +137,9 @@ var (
 	cardModel      = lipgloss.NewStyle().Foreground(lipgloss.Color("13")) // magenta
 	cardMeta       = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))  // dim
 	cardCursor     = lipgloss.NewStyle().Foreground(lipgloss.Color("14")).Bold(true)
-	cardGroup      = lipgloss.NewStyle().Foreground(lipgloss.Color("11")).Bold(true) // yellow
-	cardCost       = lipgloss.NewStyle().Foreground(lipgloss.Color("10"))            // green
+	cardGroup      = lipgloss.NewStyle().Foreground(lipgloss.Color("11")).Bold(true)                                 // yellow
+	cardCost       = lipgloss.NewStyle().Foreground(lipgloss.Color("10"))                                            // green
+	cardSelected   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("0")).Background(lipgloss.Color("14")) // black-on-cyan chip
 )
 
 // statusColor is the rail color for a status: it's the only place state is
@@ -191,8 +197,12 @@ func renderAgents(rows []agentRow, cursor, width int) string {
 		}
 
 		name := nameCell(r)
+		selected := i == cursor
 		nameStyle := cardName
-		if r.Status == session.StatusPaused {
+		switch {
+		case selected:
+			nameStyle = cardSelected // bright chip so the current agent reads at a glance
+		case r.Status == session.StatusPaused:
 			nameStyle = cardNamePaused
 		}
 		namePadded := nameStyle.Render(name) + strings.Repeat(" ", nameW-lipgloss.Width(name))
@@ -205,7 +215,7 @@ func renderAgents(rows []agentRow, cursor, width int) string {
 		indent := ""
 		if interactive {
 			indent = "  "
-			if i == cursor {
+			if selected {
 				indent = cardCursor.Render("▸") + " "
 			}
 		}
@@ -231,14 +241,21 @@ func renderAgents(rows []agentRow, cursor, width int) string {
 			line2 = descIndent + cardMeta.Render(truncate(r.Description, max(10, contentW-lipgloss.Width(descIndent))))
 		}
 
+		railColor := statusColor(r.Status)
+		if selected {
+			railColor = lipgloss.Color("14") // bright cyan rail for the current agent
+		}
+		// PaddingBottom(1) gives each card a blank line of breathing room that's
+		// *inside* the border, so the left rail stays an unbroken straight line
+		// down a group instead of breaking at every gap.
 		rail := lipgloss.NewStyle().
 			Border(lipgloss.ThickBorder(), false, false, false, true).
-			BorderForeground(statusColor(r.Status)).
-			PaddingLeft(1)
+			BorderForeground(railColor).
+			PaddingLeft(1).
+			PaddingBottom(1)
 		blocks[i] = header + rail.Render(line1+"\n"+line2)
 	}
-	// Blank line under each entry for breathing room.
-	return strings.Join(blocks, "\n\n") + "\n"
+	return strings.Join(blocks, "\n") + "\n"
 }
 
 // indentLines prefixes every non-empty line of s with prefix. Empty lines are

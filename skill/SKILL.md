@@ -111,6 +111,8 @@ claudes tasks ls                                        # plain list; `claudes t
 
 Every agent belongs to a group; the default group is implicit and renders flush at the top of `claudes ls` with no header. Any other group (e.g. `review`, `background`) gets its own labelled section below, so related agents cluster together. Set a group at create time with `claudes new --group review`, or move agents later with `claudes group review one two three`. `claudes group default <name>` (or `claudes group "" <name>`) drops an agent back to the top group. The group lives in the session env for live agents and in the pin registry for paused ones, so it survives refreshes and resurrection.
 
+**Convention: always put review agents in a `review` group.** When you spawn an agent whose job is to review a PR, diff, or another agent's work, create it with `claudes new --group review ...` (or `claudes group review <name>` after the fact). This keeps review agents visually separated from the agents doing the primary work, so the list stays legible at a glance.
+
 ## Gotchas
 
 - **`tmux capture-pane` only sees what's currently in the pane buffer.** After a `/clear` or scroll-back overflow, earlier output is gone. Use `-n 500` if you suspect truncation.

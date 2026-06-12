@@ -7,6 +7,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 
@@ -76,6 +77,7 @@ type tuiModel struct {
 	rows   []agentRow
 	cursor int
 	width  int
+	height int
 	status string // transient one-liner
 
 	exitAction exitKind
@@ -107,6 +109,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tick()
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
+		m.height = msg.Height
 		return m, nil
 	case tea.KeyMsg:
 		switch msg.String() {
@@ -174,15 +177,22 @@ func (m tuiModel) View() string {
 	if len(m.rows) == 0 {
 		return "no sessions — `claudes new` to spawn one\n\nq quit\n"
 	}
-	var b strings.Builder
-	b.WriteString(renderAgents(m.rows, m.cursor, m.width))
-	b.WriteString("\n")
+	list := renderAgents(m.rows, m.cursor, m.width)
+	footer := cardMeta.Render("↑/↓ move  enter focus tab  r refresh  q quit")
 	if m.status != "" {
-		b.WriteString(cardMeta.Render(m.status) + "\n")
+		footer = cardMeta.Render(m.status) + "\n" + footer
 	}
-	b.WriteString(cardMeta.Render("↑/↓ move  enter focus tab  r refresh  q quit"))
-	b.WriteString("\n")
-	return b.String()
+	// Pin the footer to the bottom of the screen: pad the gap between the list
+	// and the controls so the controls sit on the last row. Falls back to a
+	// simple stacked layout until we've learned the window height.
+	if m.height <= 0 {
+		return list + "\n" + footer + "\n"
+	}
+	pad := m.height - lipgloss.Height(list) - lipgloss.Height(footer)
+	if pad < 1 {
+		pad = 1
+	}
+	return list + strings.Repeat("\n", pad) + footer
 }
 
 // resolveTab finds the backend tab for r, falling back through:
