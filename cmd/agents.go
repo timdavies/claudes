@@ -179,12 +179,9 @@ func renderAgents(rows []agentRow, cursor, width int) string {
 		var header string
 		if r.Group != prevGroup || !started {
 			if r.Group != "" {
-				label := cardGroup.Render(r.Group)
-				if started {
-					header = "\n" + label + "\n" // blank-ish separator before later groups
-				} else {
-					header = label + "\n"
-				}
+				// Each card already trails a blank line (see the join below), so
+				// the group label just needs its own line — no extra separator.
+				header = cardGroup.Render(r.Group) + "\n"
 				if interactive {
 					header = indentLines(header, "  ")
 				}
@@ -240,7 +237,8 @@ func renderAgents(rows []agentRow, cursor, width int) string {
 			PaddingLeft(1)
 		blocks[i] = header + rail.Render(line1+"\n"+line2)
 	}
-	return strings.Join(blocks, "\n") + "\n"
+	// Blank line under each entry for breathing room.
+	return strings.Join(blocks, "\n\n") + "\n"
 }
 
 // indentLines prefixes every non-empty line of s with prefix. Empty lines are
