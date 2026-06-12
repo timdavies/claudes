@@ -289,24 +289,28 @@ func Run(cfg *config.Config) error {
 		// each session's figure into the env — like the description — so
 		// `claudes ls` can show it. Only write when the value changed to avoid
 		// needless env churn. ccusage failures are logged once and skipped.
-		if costs, err := cost.SessionCosts(); err != nil {
-			logf("cost: %v", err)
-		} else {
-			for _, s := range sessions {
-				if s.SessionID == "" {
-					continue
-				}
-				usd, ok := costs[s.SessionID]
-				if !ok {
-					continue
-				}
-				formatted := strconv.FormatFloat(usd, 'f', 2, 64)
-				if formatted == s.Cost {
-					continue
-				}
-				full := session.FullName(cfg.Prefix, s.Name)
-				if err := client.SetSessionEnv(full, "@claudes-cost", formatted); err != nil {
-					logf("set cost %s: %v", s.Name, err)
+		// Skip the call entirely when no session carries a UUID to map against
+		// (e.g. only pre-feature sessions) so we don't spawn ccusage for nothing.
+		if anyHasSessionID(sessions) {
+			if costs, err := cost.SessionCosts(); err != nil {
+				logf("cost: %v", err)
+			} else {
+				for _, s := range sessions {
+					if s.SessionID == "" {
+						continue
+					}
+					usd, ok := costs[s.SessionID]
+					if !ok {
+						continue
+					}
+					formatted := strconv.FormatFloat(usd, 'f', 2, 64)
+					if formatted == s.Cost {
+						continue
+					}
+					full := session.FullName(cfg.Prefix, s.Name)
+					if err := client.SetSessionEnv(full, "@claudes-cost", formatted); err != nil {
+						logf("set cost %s: %v", s.Name, err)
+					}
 				}
 			}
 		}
@@ -400,6 +404,17 @@ func writeHeartbeat(dir string) {
 
 func logf(format string, args ...any) {
 	fmt.Fprintf(os.Stderr, "%s "+format+"\n", append([]any{time.Now().Format("15:04:05")}, args...)...)
+}
+
+// anyHasSessionID reports whether at least one session carries a Claude Code
+// UUID — i.e. whether there's anything for ccusage to map a cost onto.
+func anyHasSessionID(sessions []session.Session) bool {
+	for _, s := range sessions {
+		if s.SessionID != "" {
+			return true
+		}
+	}
+	return false
 }
 
 func hash(s string) string {
