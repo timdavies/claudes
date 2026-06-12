@@ -9,7 +9,6 @@ import (
 
 	"github.com/timdavies/claudes/internal/config"
 	"github.com/timdavies/claudes/internal/iterm2"
-	"github.com/timdavies/claudes/internal/tmux"
 )
 
 // The tab integration gives every session a real, focusable terminal tab. iTerm2
@@ -155,7 +154,7 @@ func logTabErr(action string, err error) {
 // --- backend-neutral lifecycle helpers ---
 
 // maybeOpenTab opens a new tab attached to the tmux session.
-func maybeOpenTab(cfg *config.Config, full, displayName, dir string, tmuxClient *tmux.Client) {
+func maybeOpenTab(cfg *config.Config, displayName, dir string) {
 	mc, ok := tabClientFor(cfg)
 	if !ok {
 		return
@@ -172,7 +171,7 @@ func maybeOpenTab(cfg *config.Config, full, displayName, dir string, tmuxClient 
 	if err := mc.SetAppearance(sid, displayName); err != nil && !mc.IsUnavailable(err) {
 		logTabErr("set-appearance", err)
 	}
-	if err := mc.Execute(sid, attachCommand(tmuxClient, full, displayName)); err != nil && !mc.IsUnavailable(err) {
+	if err := mc.Execute(sid, attachCommand(displayName)); err != nil && !mc.IsUnavailable(err) {
 		logTabErr("execute", err)
 	}
 	reg, err := tabRegistryFor(cfg)
@@ -242,21 +241,21 @@ func maybeRenameTab(cfg *config.Config, oldName, newName string) {
 	}
 }
 
-// attachCommand reconstructs `tmux <base-args> attach-session -t <full>` as a
-// single shell-safe line for the backend's `execute`. Prepended with an OSC
-// title escape so the tab's title sticks (the shell's PS1 otherwise overwrites
-// whatever set-appearance did) and `exec`-ed so the tab closes when tmux exits,
-// instead of dropping back to a bare shell. (For iTerm2 the exec is also what
-// makes the tab self-reap when the tmux session dies.)
-func attachCommand(t *tmux.Client, full, displayName string) string {
-	parts := append([]string{"tmux"}, t.BaseArgs()...)
-	parts = append(parts, "attach-session", "-t", "="+full+":") // '=name:' forces exact session-name match
-	quoted := make([]string, len(parts))
-	for i, p := range parts {
-		quoted[i] = shellQuote(p)
+// attachCommand is the shell line a freshly-opened tab runs to attach to the
+// agent. It delegates to `claudes open <name>` (via the absolute path to the
+// running binary, so it doesn't depend on $PATH in the new tab) rather than
+// reconstructing the tmux command line — `claudes open` execs tmux attach
+// directly with no shell, which sidesteps shell-quoting hazards (notably zsh's
+// `=name` equals-expansion that mangled the old raw `-t =name:` form). Prepended
+// with an OSC title escape so the tab title sticks past the shell's PS1, and
+// `exec`-ed so the tab self-reaps when the session ends.
+func attachCommand(displayName string) string {
+	exe, err := os.Executable()
+	if err != nil || exe == "" {
+		exe = "claudes" // fall back to $PATH
 	}
 	titleEsc := fmt.Sprintf("printf '\\033]0;%s\\007'; exec ", strings.ReplaceAll(displayName, "'", `'\''`))
-	return titleEsc + strings.Join(quoted, " ")
+	return titleEsc + shellQuote(exe) + " open " + shellQuote(displayName)
 }
 
 func shellQuote(s string) string {
@@ -264,8 +263,11 @@ func shellQuote(s string) string {
 		return "''"
 	}
 	for _, r := range s {
+		// `=` is intentionally NOT treated as safe: a word starting with `=` is
+		// equals-expanded by zsh (`=foo` → path of command foo), so anything
+		// containing it must be quoted.
 		if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' ||
-			r == '_' || r == '-' || r == '.' || r == '/' || r == '@' || r == ':' || r == '=') {
+			r == '_' || r == '-' || r == '.' || r == '/' || r == '@' || r == ':') {
 			return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 		}
 	}

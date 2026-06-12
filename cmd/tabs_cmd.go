@@ -53,8 +53,7 @@ func runTabsSync(_ *cobra.Command, _ []string) error {
 		if existing[s.Name] {
 			continue
 		}
-		full := session.FullName(cfg.Prefix, s.Name)
-		maybeOpenTab(cfg, full, s.Name, s.Dir, client)
+		maybeOpenTab(cfg, s.Name, s.Dir)
 		fmt.Println(s.Name)
 		opened++
 	}

@@ -162,8 +162,7 @@ func (m tuiModel) activate() (tea.Model, tea.Cmd) {
 			}
 			// Tab vanished between resolve and focus; fall through.
 		}
-		full := session.FullName(m.cfg.Prefix, r.Name)
-		maybeOpenTab(m.cfg, full, r.Name, r.Dir, m.client)
+		maybeOpenTab(m.cfg, r.Name, r.Dir)
 		m.status = "opened tab for " + r.Name
 		return m, loadRowsCmd(m.client, m.cfg)
 	}

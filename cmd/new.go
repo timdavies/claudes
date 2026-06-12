@@ -179,7 +179,7 @@ func spawnSession(client *tmux.Client, cfg *config.Config, resolved config.Resol
 	ensureDaemonForCmd(true)
 	waitForReady(client, full, 30*time.Second)
 	if openTab {
-		maybeOpenTab(cfg, full, displayName, resolved.Dir, client)
+		maybeOpenTab(cfg, displayName, resolved.Dir)
 	}
 
 	_ = hooks.Run("post_new", resolved.Hooks.PostNew,
