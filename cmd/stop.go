@@ -55,6 +55,17 @@ func runStop(args []string, force bool) error {
 		return nil // user cancelled
 	}
 
+	if err := stopResolved(client, cfg, target, force); err != nil {
+		return err
+	}
+	fmt.Println(target.Name)
+	return nil
+}
+
+// stopResolved stops an already-resolved target — graceful (/exit, wait up to
+// stop_timeout) unless force — then closes its tab and runs the post_stop hook.
+// Shared by `claudes stop`/`kill` and the TUI's kill action.
+func stopResolved(client *tmux.Client, cfg *config.Config, target *session.Session, force bool) error {
 	full := session.FullName(cfg.Prefix, target.Name)
 
 	if !force {
@@ -87,8 +98,6 @@ func runStop(args []string, force bool) error {
 	}
 	_ = hooks.Run("post_stop", resolved.Hooks.PostStop,
 		hookEnv(target.Name, target.Project, target.Dir, target.Model))
-
-	fmt.Println(target.Name)
 	return nil
 }
 

@@ -64,6 +64,22 @@ func dash(s string) string {
 	return s
 }
 
+// tildify replaces a leading $HOME with "~" for compact full-path display
+// (used by the new-agent form's directory field and suggestions).
+func tildify(p string) string {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return p
+	}
+	if p == home {
+		return "~"
+	}
+	if strings.HasPrefix(p, home+string(os.PathSeparator)) {
+		return "~" + p[len(home):]
+	}
+	return p
+}
+
 // shortDir compresses a path to its last two segments so deep working dirs stay
 // legible: /Users/me/Projects/grow/.claude/worktrees/cact-4075 renders as
 // "worktrees/cact-4075". Paths already two segments or shorter are returned

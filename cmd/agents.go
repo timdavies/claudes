@@ -246,7 +246,7 @@ func renderAgents(rows []agentRow, cursor, width int) string {
 		line2 := ""
 		chip := ""
 		if r.State != "" {
-			chip = lipgloss.NewStyle().Foreground(statusColor(r.Status)).Bold(true).Render("["+r.State+"] ")
+			chip = lipgloss.NewStyle().Foreground(statusColor(r.Status)).Bold(true).Render("[" + r.State + "] ")
 		}
 		if r.Description != "" || chip != "" {
 			descIndent := ""

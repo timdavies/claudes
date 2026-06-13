@@ -70,6 +70,16 @@ const (
 	exitAttach
 )
 
+// tuiMode is the dashboard's current interaction mode: the list, the
+// kill-confirmation prompt, or the new-agent form overlay.
+type tuiMode int
+
+const (
+	modeList tuiMode = iota
+	modeConfirmKill
+	modeNew
+)
+
 type tuiModel struct {
 	cfg    *config.Config
 	client *tmux.Client
@@ -80,12 +90,24 @@ type tuiModel struct {
 	height int
 	status string // transient one-liner
 
+	mode       tuiMode
+	confirmRow agentRow // row pending kill confirmation (mode == modeConfirmKill)
+	form       *newForm // active new-agent form (mode == modeNew)
+
 	exitAction exitKind
 	exitName   string
 }
 
 type tickMsg time.Time
 type rowsMsg []agentRow
+type killedMsg struct {
+	name string
+	err  error
+}
+type spawnedMsg struct {
+	name string
+	err  error
+}
 
 func tick() tea.Cmd {
 	return tea.Tick(time.Second, func(t time.Time) tea.Msg { return tickMsg(t) })
@@ -111,32 +133,106 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 		return m, nil
+	case killedMsg:
+		if msg.err != nil {
+			m.status = fmt.Sprintf("kill %s: %v", msg.name, msg.err)
+		} else {
+			m.status = "killed " + msg.name
+		}
+		return m, loadRowsCmd(m.client, m.cfg)
+	case spawnedMsg:
+		if msg.err != nil {
+			m.status = fmt.Sprintf("new %s: %v", msg.name, msg.err)
+		} else {
+			m.status = "spawned " + msg.name
+		}
+		return m, loadRowsCmd(m.client, m.cfg)
 	case tea.KeyMsg:
-		switch msg.String() {
-		case "q", "esc", "ctrl+c":
-			return m, tea.Quit
-		case "up", "k":
-			if m.cursor > 0 {
-				m.cursor--
-			}
-		case "down", "j":
-			if m.cursor < len(m.rows)-1 {
-				m.cursor++
-			}
-		case "g", "home":
-			m.cursor = 0
-		case "G", "end":
-			if len(m.rows) > 0 {
-				m.cursor = len(m.rows) - 1
-			}
-		case "enter":
-			return m.activate()
-		case "r":
-			m.status = "refreshed"
-			return m, loadRowsCmd(m.client, m.cfg)
+		switch m.mode {
+		case modeConfirmKill:
+			return m.updateConfirmKill(msg)
+		case modeNew:
+			return m.updateNewForm(msg)
+		default:
+			return m.updateList(msg)
 		}
 	}
 	return m, nil
+}
+
+func (m tuiModel) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "q", "esc", "ctrl+c":
+		return m, tea.Quit
+	case "up", "k":
+		if m.cursor > 0 {
+			m.cursor--
+		}
+	case "down", "j":
+		if m.cursor < len(m.rows)-1 {
+			m.cursor++
+		}
+	case "g", "home":
+		m.cursor = 0
+	case "G", "end":
+		if len(m.rows) > 0 {
+			m.cursor = len(m.rows) - 1
+		}
+	case "enter":
+		return m.activate()
+	case "x":
+		if m.cursor >= 0 && m.cursor < len(m.rows) {
+			m.confirmRow = m.rows[m.cursor]
+			m.mode = modeConfirmKill
+			m.status = ""
+		}
+	case "n":
+		m.form = newNewForm(m.cfg, m.rows)
+		m.mode = modeNew
+		m.status = ""
+	case "r":
+		m.status = "refreshed"
+		return m, loadRowsCmd(m.client, m.cfg)
+	}
+	return m, nil
+}
+
+// updateConfirmKill handles the y/n prompt shown after pressing x on a row.
+func (m tuiModel) updateConfirmKill(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "y", "Y", "enter":
+		row := m.confirmRow
+		m.mode = modeList
+		// A paused (pinned, no live tmux) agent is already dead — "kill" just
+		// drops it from the pin registry. A live agent gets a graceful stop,
+		// run async so the up-to-stop_timeout wait doesn't freeze the UI.
+		if row.Status == session.StatusPaused {
+			if reg, err := pinnedRegistry(); err == nil && reg != nil {
+				_ = reg.Delete(row.Name)
+			}
+			m.status = "unpinned " + row.Name
+			return m, loadRowsCmd(m.client, m.cfg)
+		}
+		m.status = "killing " + row.Name + "…"
+		return m, killSessionCmd(m.client, m.cfg, row)
+	case "n", "N", "esc", "ctrl+c", "q":
+		m.mode = modeList
+		m.status = "kill cancelled"
+	}
+	return m, nil
+}
+
+// killSessionCmd gracefully stops a live session off the event loop.
+func killSessionCmd(client *tmux.Client, cfg *config.Config, row agentRow) tea.Cmd {
+	return func() tea.Msg {
+		target := &session.Session{Name: row.Name, Dir: row.Dir, Project: row.Project, Model: row.Model}
+		err := stopResolved(client, cfg, target, false)
+		// Drop a pin so a killed pinned agent doesn't linger as paused.
+		if reg, rerr := pinnedRegistry(); rerr == nil && reg != nil {
+			_ = reg.Delete(row.Name)
+		}
+		return killedMsg{name: row.Name, err: err}
+	}
 }
 
 // activate handles Enter: focus the session's tab, or fall back to tmux attach.
@@ -173,13 +269,22 @@ func (m tuiModel) activate() (tea.Model, tea.Cmd) {
 }
 
 func (m tuiModel) View() string {
+	if m.mode == modeNew && m.form != nil {
+		return m.form.view(m.width, m.height)
+	}
 	if len(m.rows) == 0 {
-		return "no sessions — `claudes new` to spawn one\n\nq quit\n"
+		return "no sessions — press n to spawn one\n\nn new  q quit\n"
 	}
 	list := renderAgents(m.rows, m.cursor, m.width)
-	footer := cardMeta.Render("↑/↓ move  enter focus tab  r refresh  q quit")
-	if m.status != "" {
-		footer = cardMeta.Render(m.status) + "\n" + footer
+	var footer string
+	if m.mode == modeConfirmKill {
+		footer = confirmStyle.Render(fmt.Sprintf("kill %s? ", m.confirmRow.Name)) +
+			cardMeta.Render("y/n")
+	} else {
+		footer = cardMeta.Render("↑/↓ move  enter focus  n new  x kill  r refresh  q quit")
+		if m.status != "" {
+			footer = cardMeta.Render(m.status) + "\n" + footer
+		}
 	}
 	// Pin the footer to the bottom of the screen: pad the gap between the list
 	// and the controls so the controls sit on the last row. Falls back to a
