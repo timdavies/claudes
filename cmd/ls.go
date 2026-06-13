@@ -64,19 +64,21 @@ func dash(s string) string {
 	return s
 }
 
-// tildify replaces a leading $HOME with "~" for compactness.
-func tildify(p string) string {
-	home, err := os.UserHomeDir()
-	if err != nil || home == "" {
-		return p
+// shortDir compresses a path to its last two segments so deep working dirs stay
+// legible: /Users/me/Projects/grow/.claude/worktrees/cact-4075 renders as
+// "worktrees/cact-4075". Paths already two segments or shorter are returned
+// whole (with their root stripped, e.g. /tmp → "tmp").
+func shortDir(p string) string {
+	var segs []string
+	for _, seg := range strings.Split(p, string(os.PathSeparator)) {
+		if seg != "" {
+			segs = append(segs, seg)
+		}
 	}
-	if p == home {
-		return "~"
+	if len(segs) > 2 {
+		segs = segs[len(segs)-2:]
 	}
-	if strings.HasPrefix(p, home+string(os.PathSeparator)) {
-		return "~" + p[len(home):]
-	}
-	return p
+	return strings.Join(segs, string(os.PathSeparator))
 }
 
 // truncate cuts s to at most n display columns (UTF-8 aware on rune count;

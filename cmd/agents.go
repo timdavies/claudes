@@ -235,7 +235,7 @@ func renderAgents(rows []agentRow, cursor, width int) string {
 		// via a spacer; it's truncated first so a long path can't crowd it out.
 		contentW := max(20, width-2)
 		leftW := lipgloss.Width(left)
-		dirStr := truncate(tildify(r.Dir), max(4, contentW-leftW-1))
+		dirStr := truncate(shortDir(r.Dir), max(4, contentW-leftW-1))
 		dirRendered := cardMeta.Render(dirStr)
 		spacer := max(1, contentW-leftW-lipgloss.Width(dirRendered))
 		line1 := left + strings.Repeat(" ", spacer) + dirRendered
