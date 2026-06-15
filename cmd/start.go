@@ -40,7 +40,7 @@ var startCmd = &cobra.Command{
 		if has, _ := client.Has(full); has {
 			return fmt.Errorf("agent %q is already running", name)
 		}
-		if err := resurrectPin(client, cfg, name, true); err != nil {
+		if err := resurrectPin(client, cfg, name, false); err != nil {
 			return err
 		}
 		fmt.Println(name)

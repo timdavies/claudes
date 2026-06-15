@@ -245,7 +245,7 @@ func spawnAgentCmd(client *tmux.Client, cfg *config.Config, name, dir string, pi
 		if reg, _ := pinnedRegistry(); reg != nil && reg.Has(name) {
 			return spawnedMsg{name, fmt.Errorf("pinned and paused — start or unpin it first")}
 		}
-		if err := spawnSession(client, cfg, resolved, name, nil, true); err != nil {
+		if err := spawnSession(client, cfg, resolved, name, nil, false); err != nil {
 			return spawnedMsg{name, err}
 		}
 		if pin {

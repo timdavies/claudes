@@ -109,7 +109,7 @@ var newCmd = &cobra.Command{
 				displayName, displayName, displayName)
 		}
 
-		if err := spawnSession(client, cfg, resolved, displayName, passthrough, true); err != nil {
+		if err := spawnSession(client, cfg, resolved, displayName, passthrough, false); err != nil {
 			return err
 		}
 
