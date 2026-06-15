@@ -200,6 +200,12 @@ func renderAgents(rows []agentRow, cursor, width int) string {
 				if interactive {
 					header = indentLines(header, "  ")
 				}
+				// A couple of blank lines set each group apart from the one
+				// above it — but not when this is the very first block (no
+				// default group preceding it).
+				if i > 0 {
+					header = "\n\n" + header
+				}
 			}
 			prevGroup = r.Group
 			started = true
@@ -269,7 +275,11 @@ func renderAgents(rows []agentRow, cursor, width int) string {
 			BorderForeground(railColor).
 			PaddingLeft(1).
 			PaddingBottom(1)
-		blocks[i] = header + rail.Render(line1+"\n"+line2)
+		body := line1
+		if line2 != "" {
+			body += "\n" + line2
+		}
+		blocks[i] = header + rail.Render(body)
 	}
 	return strings.Join(blocks, "\n") + "\n"
 }
