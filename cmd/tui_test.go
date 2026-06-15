@@ -59,6 +59,45 @@ func TestConfirmKillRequiresConfirmation(t *testing.T) {
 	}
 }
 
+func TestPausedPinnedAgentRefusesKill(t *testing.T) {
+	m := baseModel()
+	m.rows = []agentRow{{Name: "alpha", Status: session.StatusPaused, Pinned: true, Dir: "/tmp/alpha"}}
+
+	m, cmd := send(m, key("x"))
+	if m.mode != modeList {
+		t.Fatalf("x on a paused pinned agent should stay on the list, got %v", m.mode)
+	}
+	if cmd != nil {
+		t.Fatalf("x on a paused pinned agent should not dispatch a command")
+	}
+	if m.status != "can't kill a pinned agent" {
+		t.Fatalf("expected refusal message, got %q", m.status)
+	}
+}
+
+func TestConfirmPromptSaysPauseForPinnedRunning(t *testing.T) {
+	m := baseModel()
+	m.rows = []agentRow{{Name: "alpha", Status: session.StatusRunning, Pinned: true, Dir: "/tmp/alpha"}}
+	m.width, m.height = 80, 24
+
+	m, _ = send(m, key("x"))
+	if m.mode != modeConfirmKill {
+		t.Fatalf("x on a running pinned agent should confirm, got %v", m.mode)
+	}
+	if v := m.View(); !strings.Contains(v, "pause alpha?") {
+		t.Errorf("confirm prompt for a pinned agent should say pause, got:\n%s", v)
+	}
+
+	// y dispatches a pause (not a kill) and returns to the list.
+	m, cmd := send(m, key("y"))
+	if m.mode != modeList {
+		t.Fatalf("y should return to the list, got %v", m.mode)
+	}
+	if cmd == nil {
+		t.Fatalf("y should dispatch a pause command")
+	}
+}
+
 func TestNewKeyOpensFormAndEscCancels(t *testing.T) {
 	m := baseModel()
 

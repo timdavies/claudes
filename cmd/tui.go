@@ -13,6 +13,7 @@ import (
 	"golang.org/x/term"
 
 	"github.com/timdavies/claudes/internal/config"
+	"github.com/timdavies/claudes/internal/pinned"
 	"github.com/timdavies/claudes/internal/session"
 	"github.com/timdavies/claudes/internal/tmux"
 )
@@ -106,6 +107,15 @@ type killedMsg struct {
 	name string
 	err  error
 }
+type pausedMsg struct {
+	name string
+	err  error
+}
+type pinToggledMsg struct {
+	name   string
+	pinned bool // the new pin state
+	err    error
+}
 type spawnedMsg struct {
 	name string
 	err  error
@@ -144,6 +154,22 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.status = fmt.Sprintf("kill %s: %v", msg.name, msg.err)
 		} else {
 			m.status = "killed " + msg.name
+		}
+		return m, loadRowsCmd(m.client, m.cfg)
+	case pausedMsg:
+		if msg.err != nil {
+			m.status = fmt.Sprintf("pause %s: %v", msg.name, msg.err)
+		} else {
+			m.status = "paused " + msg.name
+		}
+		return m, loadRowsCmd(m.client, m.cfg)
+	case pinToggledMsg:
+		if msg.err != nil {
+			m.status = fmt.Sprintf("pin %s: %v", msg.name, msg.err)
+		} else if msg.pinned {
+			m.status = "pinned " + msg.name
+		} else {
+			m.status = "unpinned " + msg.name
 		}
 		return m, loadRowsCmd(m.client, m.cfg)
 	case spawnedMsg:
@@ -206,9 +232,22 @@ func (m tuiModel) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.activate()
 	case "x":
 		if m.cursor >= 0 && m.cursor < len(m.rows) {
-			m.confirmRow = m.rows[m.cursor]
+			row := m.rows[m.cursor]
+			// Pinning is the delete guard: a paused pinned agent is already
+			// stopped, so there's nothing to pause and x won't unpin it.
+			if row.Pinned && row.Status == session.StatusPaused {
+				m.status = "can't kill a pinned agent"
+				return m, nil
+			}
+			m.confirmRow = row
 			m.mode = modeConfirmKill
 			m.status = ""
+		}
+	case "p":
+		if m.cursor >= 0 && m.cursor < len(m.rows) {
+			row := m.rows[m.cursor]
+			m.status = ""
+			return m, togglePinCmd(m.client, m.cfg, row)
 		}
 	case "n":
 		m.form = newNewForm(m.cfg, m.rows)
@@ -227,15 +266,12 @@ func (m tuiModel) updateConfirmKill(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "y", "Y", "enter":
 		row := m.confirmRow
 		m.mode = modeList
-		// A paused (pinned, no live tmux) agent is already dead — "kill" just
-		// drops it from the pin registry. A live agent gets a graceful stop,
-		// run async so the up-to-stop_timeout wait doesn't freeze the UI.
-		if row.Status == session.StatusPaused {
-			if reg, err := pinnedRegistry(); err == nil && reg != nil {
-				_ = reg.Delete(row.Name)
-			}
-			m.status = "unpinned " + row.Name
-			return m, loadRowsCmd(m.client, m.cfg)
+		// Pinned agents are protected from deletion. A live pinned agent gets
+		// paused (graceful stop, pin kept) so it can be resurrected later.
+		// (A paused pinned agent never reaches here — x refuses it outright.)
+		if row.Pinned {
+			m.status = "pausing " + row.Name + "…"
+			return m, pauseSessionCmd(m.client, m.cfg, row)
 		}
 		m.status = "killing " + row.Name + "…"
 		return m, killSessionCmd(m.client, m.cfg, row)
@@ -256,6 +292,56 @@ func killSessionCmd(client *tmux.Client, cfg *config.Config, row agentRow) tea.C
 			_ = reg.Delete(row.Name)
 		}
 		return killedMsg{name: row.Name, err: err}
+	}
+}
+
+// pauseSessionCmd gracefully stops a live pinned session while keeping its pin,
+// so it lingers as a resurrectable paused entry. Run off the event loop because
+// the graceful stop can wait up to stop_timeout.
+func pauseSessionCmd(client *tmux.Client, cfg *config.Config, row agentRow) tea.Cmd {
+	return func() tea.Msg {
+		target := &session.Session{Name: row.Name, Dir: row.Dir, Project: row.Project, Model: row.Model}
+		err := stopResolved(client, cfg, target, false)
+		return pausedMsg{name: row.Name, err: err}
+	}
+}
+
+// togglePinCmd pins an unpinned agent or unpins a pinned one — the same effect
+// as `claudes pin`/`claudes unpin`. Pinning requires a live tmux session.
+func togglePinCmd(client *tmux.Client, cfg *config.Config, row agentRow) tea.Cmd {
+	return func() tea.Msg {
+		reg, err := pinnedRegistry()
+		if err != nil {
+			return pinToggledMsg{name: row.Name, err: err}
+		}
+		full := session.FullName(cfg.Prefix, row.Name)
+		if row.Pinned {
+			if err := reg.Delete(row.Name); err != nil {
+				return pinToggledMsg{name: row.Name, err: err}
+			}
+			if has, _ := client.Has(full); has {
+				_ = client.UnsetSessionEnv(full, "@claudes-pinned")
+			}
+			return pinToggledMsg{name: row.Name, pinned: false}
+		}
+		has, _ := client.Has(full)
+		if !has {
+			return pinToggledMsg{name: row.Name, err: fmt.Errorf("agent not running; pin live agents only")}
+		}
+		env, _ := client.SessionEnv(full)
+		entry := pinned.Entry{
+			Project:         env["CLAUDES_PROJECT"],
+			Model:           env["CLAUDES_MODEL"],
+			Dir:             env["CLAUDES_DIR"],
+			Group:           session.NormalizeGroup(env["CLAUDES_GROUP"]),
+			DefaultArgs:     decodeJSONStrings(env["CLAUDES_DEFAULT_ARGS"]),
+			PassthroughArgs: decodeJSONStrings(env["CLAUDES_PASSTHROUGH"]),
+		}
+		if err := reg.Set(row.Name, entry); err != nil {
+			return pinToggledMsg{name: row.Name, err: err}
+		}
+		_ = client.SetSessionEnv(full, "@claudes-pinned", "true")
+		return pinToggledMsg{name: row.Name, pinned: true}
 	}
 }
 
@@ -324,15 +410,19 @@ func (m tuiModel) View() string {
 	list := renderAgents(m.rows, m.cursor, m.col, m.width)
 	var footer string
 	if m.mode == modeConfirmKill {
-		footer = confirmStyle.Render(fmt.Sprintf("kill %s? ", m.confirmRow.Name)) +
+		verb := "kill"
+		if m.confirmRow.Pinned {
+			verb = "pause"
+		}
+		footer = confirmStyle.Render(fmt.Sprintf("%s %s? ", verb, m.confirmRow.Name)) +
 			cardMeta.Render("y/n")
 	} else {
-		hint := "↑/↓ move  enter focus  n new  x kill  r refresh  q quit"
+		hint := "↑/↓ move  enter focus  n new  p pin  x kill  r refresh  q quit"
 		if m.cursor >= 0 && m.cursor < len(m.rows) && m.rows[m.cursor].PR != "" {
 			if m.col == 1 {
-				hint = "←/→ select  enter open PR  ↑/↓ move  n new  x kill  q quit"
+				hint = "←/→ select  enter open PR  ↑/↓ move  n new  p pin  x kill  q quit"
 			} else {
-				hint = "↑/↓ move  →PR  enter focus  n new  x kill  r refresh  q quit"
+				hint = "↑/↓ move  →PR  enter focus  n new  p pin  x kill  r refresh  q quit"
 			}
 		}
 		footer = cardMeta.Render(hint)
