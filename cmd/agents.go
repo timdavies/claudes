@@ -24,6 +24,7 @@ type agentRow struct {
 	State       string
 	Group       string
 	Cost        string
+	PR          string // attached pull-request URL, may be empty
 	Pinned      bool
 	HasTab      bool
 	TabSID      string
@@ -130,6 +131,7 @@ func loadAgentRows(client *tmux.Client, cfg *config.Config) []agentRow {
 			State:       s.State,
 			Group:       s.Group,
 			Cost:        s.Cost,
+			PR:          s.PR,
 			Pinned:      s.Pinned,
 			HasTab:      has,
 			TabSID:      sid,
@@ -144,6 +146,7 @@ var (
 	cardName       = lipgloss.NewStyle().Bold(true)
 	cardNamePaused = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("8"))
 	cardModel      = lipgloss.NewStyle().Foreground(lipgloss.Color("13")) // magenta
+	cardPR         = lipgloss.NewStyle().Foreground(lipgloss.Color("12")) // blue
 	cardMeta       = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))  // dim
 	cardCursor     = lipgloss.NewStyle().Foreground(lipgloss.Color("14")).Bold(true)
 	cardGroup      = lipgloss.NewStyle().Foreground(lipgloss.Color("11")).Bold(true)                                 // yellow
@@ -170,8 +173,9 @@ func statusColor(s session.Status) lipgloss.Color {
 
 // renderAgents renders the list as tight two-line cards, each fronted by a
 // status-colored left rail. cursor is the selected index (-1 for none, e.g.
-// non-interactive `ls`); width truncates the second line.
-func renderAgents(rows []agentRow, cursor, width int) string {
+// non-interactive `ls`); col is the selected cell within the cursor row (0 =
+// the agent, 1 = its attached PR); width truncates the second line.
+func renderAgents(rows []agentRow, cursor, col, width int) string {
 	if width <= 0 {
 		width = 80
 	}
@@ -213,17 +217,31 @@ func renderAgents(rows []agentRow, cursor, width int) string {
 
 		name := nameCell(r)
 		selected := i == cursor
+		pr := prDisplayID(r.PR)
+		// The cursor highlight lives on whichever cell is active: the agent name
+		// (col 0) or its PR chip (col 1). With no PR, the name always wins so a
+		// stale col can't strand the highlight on an empty cell.
+		prActive := selected && col == 1 && pr != ""
+		nameActive := selected && !prActive
 		nameStyle := cardName
 		switch {
-		case selected:
+		case nameActive:
 			nameStyle = cardSelected // bright chip so the current agent reads at a glance
 		case r.Status == session.StatusPaused:
 			nameStyle = cardNamePaused
 		}
 		namePadded := nameStyle.Render(name) + strings.Repeat(" ", nameW-lipgloss.Width(name))
 
-		// Line 1 left cluster: name · model · cost.
-		left := namePadded + "  " + cardModel.Render(dash(r.Model))
+		// Line 1 left cluster: name · #pr · model · cost.
+		left := namePadded
+		if pr != "" {
+			prStyle := cardPR
+			if prActive {
+				prStyle = cardSelected
+			}
+			left += "  " + prStyle.Render(pr)
+		}
+		left += "  " + cardModel.Render(dash(r.Model))
 		if r.Cost != "" && r.Cost != "0.00" {
 			left += "  " + cardCost.Render("$"+r.Cost)
 		}
@@ -294,6 +312,23 @@ func indentLines(s, prefix string) string {
 		}
 	}
 	return strings.Join(lines, "\n")
+}
+
+// prDisplayID renders an attached PR url as a compact "#123" chip. GitHub PR
+// urls end with /pull/<number>; for anything else we fall back to the last path
+// segment so a non-standard url still shows something glanceable.
+func prDisplayID(url string) string {
+	if url == "" {
+		return ""
+	}
+	seg := strings.TrimRight(url, "/")
+	if idx := strings.LastIndex(seg, "/"); idx >= 0 {
+		seg = seg[idx+1:]
+	}
+	if seg == "" {
+		return ""
+	}
+	return "#" + seg
 }
 
 // nameCell is the name plus a trailing pin marker when pinned.

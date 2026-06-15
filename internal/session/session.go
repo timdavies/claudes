@@ -31,6 +31,7 @@ type Session struct {
 	SelfReport  string // activity the agent self-reported via `claudes status`, may be empty
 	State       string // self-reported state keyword (working/waiting/blocked/done), may be empty
 	Group       string // agent group; "" means the default group
+	PR          string // attached pull-request URL (via `claudes pr`), may be empty
 	SessionID   string // Claude Code session UUID (transcript filename stem)
 	Cost        string // estimated cost in USD, stamped by the daemon (e.g. "1.23")
 	Pinned      bool
@@ -93,6 +94,7 @@ func List(client *tmux.Client, cfg *config.Config) ([]Session, error) {
 			Description: env["@claudes-description"],
 			SelfReport:  env["@claudes-self-description"],
 			State:       env["@claudes-state"],
+			PR:          env["@claudes-pr"],
 			SessionID:   env["CLAUDES_SESSION_ID"],
 			Cost:        env["@claudes-cost"],
 			Raw:         in,

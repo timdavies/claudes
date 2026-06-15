@@ -29,6 +29,7 @@ For visual layout (windows, workspaces, panes, browsers, notifications), use the
 | Write raw keys (no Enter) | `claudes write --keys <name> <key>...` (e.g. `Escape`, `Up`, `C-c`, `BSpace`) |
 | Read recent output | `claudes read <name>` (default 50 lines; `-n N`, `-f` to follow) |
 | Report your own activity/state | `claudes status "<activity>" [--state working\|waiting\|blocked\|done]` (run from inside the session; `--clear` to reset) |
+| Attach a PR to your session | `claudes pr [url\|number]` (run from inside the session; no arg auto-detects the branch's PR via `gh`; `--clear` to detach). Shows as `#ID` left of the model in `ls`; in the TUI arrow right onto it and press enter to open in the browser |
 | Rename a session | `claudes rename <old> <new>` (or `claudes rename <new>` for picker) |
 | Graceful stop | `claudes stop <name>` (sends `/exit`, waits, then kills) |
 | Force kill | `claudes kill <name>` (alias for `stop --force`) |

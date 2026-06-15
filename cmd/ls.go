@@ -53,7 +53,7 @@ func runLs(cmd *cobra.Command, args []string) error {
 	// No-op if it's already running. Best-effort.
 	ensureDaemonForCmd(false)
 
-	fmt.Fprint(os.Stdout, renderAgents(rows, -1, terminalWidth()))
+	fmt.Fprint(os.Stdout, renderAgents(rows, -1, 0, terminalWidth()))
 	return nil
 }
 

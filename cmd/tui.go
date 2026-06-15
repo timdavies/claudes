@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"strings"
 	"time"
 
@@ -86,6 +87,7 @@ type tuiModel struct {
 
 	rows   []agentRow
 	cursor int
+	col    int // selected cell in the cursor row: 0 = agent, 1 = its PR
 	width  int
 	height int
 	status string // transient one-liner
@@ -107,6 +109,10 @@ type killedMsg struct {
 type spawnedMsg struct {
 	name string
 	err  error
+}
+type openedURLMsg struct {
+	url string
+	err error
 }
 
 func tick() tea.Cmd {
@@ -147,6 +153,13 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.status = "spawned " + msg.name
 		}
 		return m, loadRowsCmd(m.client, m.cfg)
+	case openedURLMsg:
+		if msg.err != nil {
+			m.status = fmt.Sprintf("open failed: %v", msg.err)
+		} else {
+			m.status = "opened " + msg.url
+		}
+		return m, nil
 	case tea.KeyMsg:
 		switch m.mode {
 		case modeConfirmKill:
@@ -167,16 +180,27 @@ func (m tuiModel) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "up", "k":
 		if m.cursor > 0 {
 			m.cursor--
+			m.col = 0
 		}
 	case "down", "j":
 		if m.cursor < len(m.rows)-1 {
 			m.cursor++
+			m.col = 0
 		}
+	case "right", "l":
+		// Step onto the PR cell, but only when this row actually has one.
+		if m.cursor >= 0 && m.cursor < len(m.rows) && m.rows[m.cursor].PR != "" {
+			m.col = 1
+		}
+	case "left", "h":
+		m.col = 0
 	case "g", "home":
 		m.cursor = 0
+		m.col = 0
 	case "G", "end":
 		if len(m.rows) > 0 {
 			m.cursor = len(m.rows) - 1
+			m.col = 0
 		}
 	case "enter":
 		return m.activate()
@@ -235,15 +259,37 @@ func killSessionCmd(client *tmux.Client, cfg *config.Config, row agentRow) tea.C
 	}
 }
 
+// openURLCmd opens url in the default browser off the event loop.
+func openURLCmd(url string) tea.Cmd {
+	return func() tea.Msg {
+		err := exec.Command("open", url).Start()
+		return openedURLMsg{url: url, err: err}
+	}
+}
+
+// startSessionCmd resurrects a paused pinned agent off the event loop.
+func startSessionCmd(cfg *config.Config, row agentRow) tea.Cmd {
+	return func() tea.Msg {
+		client := newClient(cfg)
+		err := resurrectPin(client, cfg, row.Name, true)
+		return spawnedMsg{name: row.Name, err: err}
+	}
+}
+
 // activate handles Enter: focus the session's tab, or fall back to tmux attach.
 func (m tuiModel) activate() (tea.Model, tea.Cmd) {
 	if len(m.rows) == 0 {
 		return m, nil
 	}
 	r := m.rows[m.cursor]
+	// PR cell selected → open it in the browser instead of focusing the tab.
+	if m.col == 1 && r.PR != "" {
+		m.status = "opening " + prDisplayID(r.PR)
+		return m, openURLCmd(r.PR)
+	}
 	if r.Status == session.StatusPaused {
-		m.status = fmt.Sprintf("%s is paused — `claudes start %s` to resurrect", r.Name, r.Name)
-		return m, nil
+		m.status = "starting " + r.Name + "…"
+		return m, startSessionCmd(m.cfg, r)
 	}
 	mc, ok := tabClientFor(m.cfg)
 	if ok {
@@ -275,13 +321,21 @@ func (m tuiModel) View() string {
 	if len(m.rows) == 0 {
 		return "no sessions — press n to spawn one\n\nn new  q quit\n"
 	}
-	list := renderAgents(m.rows, m.cursor, m.width)
+	list := renderAgents(m.rows, m.cursor, m.col, m.width)
 	var footer string
 	if m.mode == modeConfirmKill {
 		footer = confirmStyle.Render(fmt.Sprintf("kill %s? ", m.confirmRow.Name)) +
 			cardMeta.Render("y/n")
 	} else {
-		footer = cardMeta.Render("↑/↓ move  enter focus  n new  x kill  r refresh  q quit")
+		hint := "↑/↓ move  enter focus  n new  x kill  r refresh  q quit"
+		if m.cursor >= 0 && m.cursor < len(m.rows) && m.rows[m.cursor].PR != "" {
+			if m.col == 1 {
+				hint = "←/→ select  enter open PR  ↑/↓ move  n new  x kill  q quit"
+			} else {
+				hint = "↑/↓ move  →PR  enter focus  n new  x kill  r refresh  q quit"
+			}
+		}
+		footer = cardMeta.Render(hint)
 		if m.status != "" {
 			footer = cardMeta.Render(m.status) + "\n" + footer
 		}
