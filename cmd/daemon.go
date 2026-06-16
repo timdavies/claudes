@@ -113,17 +113,24 @@ func runDaemonLogs(_ *cobra.Command, _ []string) error {
 }
 
 // ensureDaemonForCmd is the hook callable from session-mutating commands.
-// Kept here (not in daemon pkg) so it can use cmd's loadConfig + newClient
-// helpers. Returns nothing; failures to spawn are non-fatal.
+//
+// Auto-spawn is intentionally disabled: the daemon's jobs (ambient pane
+// summaries, ccusage cost stamping, iTerm2 tab reconcile) are no longer worth
+// the per-tick osascript/CPU churn now that agents self-report via
+// `claudes status`. The daemon code is kept intact — run `claudes daemon start`
+// to bring it back, or restore the body below to re-enable auto-spawn.
 func ensureDaemonForCmd(spawnAlways bool) {
-	cfg, err := loadConfig()
-	if err != nil {
-		return
-	}
-	client := newClient(cfg)
-	sessions, err := session.List(client, cfg)
-	if err != nil {
-		return
-	}
-	_ = daemon.Ensure(cfg, sessions, spawnAlways)
+	// Disabled — see doc comment. Body preserved for easy re-enable:
+	//
+	//	cfg, err := loadConfig()
+	//	if err != nil {
+	//		return
+	//	}
+	//	client := newClient(cfg)
+	//	sessions, err := session.List(client, cfg)
+	//	if err != nil {
+	//		return
+	//	}
+	//	_ = daemon.Ensure(cfg, sessions, spawnAlways)
+	_ = spawnAlways
 }

@@ -81,6 +81,10 @@ func collectSessions(client *tmux.Client, cfg *config.Config) []session.Session 
 func loadAgentRows(client *tmux.Client, cfg *config.Config) []agentRow {
 	sessions := collectSessions(client, cfg)
 
+	// TabSID/HasTab come straight from the registry — no per-tick mc.List()
+	// (osascript) round-trip. Liveness is verified lazily on Enter (resolveTab),
+	// which prunes stale entries then; the registry hint is only a focus
+	// shortcut, so a closed-out-from-under-us tab costs nothing until used.
 	tracked := map[string]string{} // name -> session_id (from registry)
 	reg, _ := tabRegistryFor(cfg)
 	if reg != nil {
@@ -89,34 +93,11 @@ func loadAgentRows(client *tmux.Client, cfg *config.Config) []agentRow {
 		}
 	}
 
-	live := map[string]bool{}
-	liveKnown := false
-	if mc, ok := tabClientFor(cfg); ok {
-		if tabs, err := mc.List(); err == nil {
-			liveKnown = true
-			for _, t := range tabs {
-				if t.SessionID != "" {
-					live[t.SessionID] = true
-				}
-			}
-		}
-	}
-
 	rows := make([]agentRow, len(sessions))
 	for i, s := range sessions {
 		sid, has := tracked[s.Name]
-		if has && liveKnown && !live[sid] {
-			// Tab was closed out from under us — drop the stale entry so the
-			// indicator goes dark and a later focus re-resolves by title.
-			has = false
-			sid = ""
-			if reg != nil {
-				_ = reg.Delete(s.Name)
-			}
-		}
 		// A self-reported activity (via `claudes status`) takes precedence over
-		// the daemon's ambient summary; the daemon keeps refreshing underneath
-		// and reappears once the agent clears its report.
+		// any ambient summary set under @claudes-description.
 		desc := s.SelfReport
 		if desc == "" {
 			desc = s.Description
