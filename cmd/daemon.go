@@ -134,3 +134,18 @@ func ensureDaemonForCmd(spawnAlways bool) {
 	//	_ = daemon.Ensure(cfg, sessions, spawnAlways)
 	_ = spawnAlways
 }
+
+// ensureDaemonForSchedule spawns the daemon (even with zero sessions) so it can
+// host the cron. Called whenever a schedule is added, enabled, or fired.
+func ensureDaemonForSchedule() {
+	cfg, err := loadConfig()
+	if err != nil {
+		return
+	}
+	client := newClient(cfg)
+	sessions, err := session.List(client, cfg)
+	if err != nil {
+		return
+	}
+	_ = daemon.Ensure(cfg, sessions, true)
+}

@@ -37,6 +37,7 @@ import (
 	"github.com/timdavies/claudes/internal/config"
 	"github.com/timdavies/claudes/internal/cost"
 	"github.com/timdavies/claudes/internal/iterm2"
+	"github.com/timdavies/claudes/internal/schedule"
 	"github.com/timdavies/claudes/internal/session"
 	"github.com/timdavies/claudes/internal/tmux"
 )
@@ -235,6 +236,13 @@ func Run(cfg *config.Config) error {
 	cache := newHashCache(hashesPath(dir))
 	cache.load()
 
+	// The daemon's primary job is now the scheduler: fire due schedules, spawn
+	// ephemeral runs, finalize + tear down their worktrees. The old ambient jobs
+	// (pane summaries, ccusage cost, tab reconcile) are off by default — set
+	// CLAUDES_DAEMON_AMBIENT=1 to bring them back.
+	store := schedule.NewStore(schedulesPath(dir))
+	reconcileOrphans(client, cfg, store)
+
 	tick := tickInterval()
 	mTick := tabTickInterval()
 
@@ -274,101 +282,24 @@ func Run(cfg *config.Config) error {
 		if err != nil {
 			logf("list sessions: %v", err)
 		}
-		if len(sessions) == 0 {
-			logf("no sessions, exiting")
+		// Exit only when there's nothing left to do: no live sessions, no
+		// enabled schedules, and no run mid-flight.
+		if len(sessions) == 0 && store.EnabledCount() == 0 && len(store.RunningRuns()) == 0 {
+			logf("no sessions or schedules, exiting")
 			return nil
 		}
-		if tabReconcile != nil {
-			live := map[string]bool{}
-			for _, s := range sessions {
-				live[s.Name] = true
-			}
-			tabReconcile(live)
-		}
-		// Resolve each session's Claude Code UUID, backfilling sessions claudes
-		// didn't stamp (created before --session-id) from the newest transcript
-		// in their cwd and persisting it so the next tick is a direct lookup.
-		ids := map[string]string{} // session name -> UUID
-		claimed := map[string]bool{}
-		for _, s := range sessions {
-			if s.SessionID != "" {
-				ids[s.Name] = s.SessionID
-				claimed[s.SessionID] = true
-			}
-		}
-		for _, s := range sessions {
-			if s.SessionID != "" {
-				continue
-			}
-			id := cost.ResolveSessionID(s.Dir, claimed)
-			if id == "" {
-				continue
-			}
-			claimed[id] = true
-			ids[s.Name] = id
-			full := session.FullName(cfg.Prefix, s.Name)
-			if err := client.SetSessionEnv(full, "CLAUDES_SESSION_ID", id); err != nil {
-				logf("backfill session id %s: %v", s.Name, err)
-			}
+
+		// The scheduler: fire what's due, finalize what's finished.
+		fireDue(client, cfg, store, dir)
+		sweepCompletions(client, cfg, store)
+
+		if ambientEnabled() {
+			runAmbient(client, cfg, cache, tabReconcile, sessions)
+			cache.save()
 		}
 
-		// Refresh cost via ccusage (one call covers every session) and stamp
-		// each session's figure into the env — like the description — so
-		// `claudes ls` can show it. Only write when the value changed to avoid
-		// needless env churn. Skip entirely when nothing maps to a UUID.
-		if len(ids) > 0 {
-			if costs, err := cost.SessionCosts(); err != nil {
-				logf("cost: %v", err)
-			} else {
-				for _, s := range sessions {
-					usd, ok := costs[ids[s.Name]]
-					if !ok {
-						continue
-					}
-					formatted := strconv.FormatFloat(usd, 'f', 2, 64)
-					if formatted == s.Cost {
-						continue
-					}
-					full := session.FullName(cfg.Prefix, s.Name)
-					if err := client.SetSessionEnv(full, "@claudes-cost", formatted); err != nil {
-						logf("set cost %s: %v", s.Name, err)
-					}
-				}
-			}
-		}
-
-		// Summarize each session that's changed since last tick.
-		for _, s := range sessions {
-			full := session.FullName(cfg.Prefix, s.Name)
-			content, err := client.CapturePane(full, captureLines)
-			if err != nil {
-				logf("capture %s: %v", s.Name, err)
-				continue
-			}
-			h := hash(content)
-			if cache.get(s.Name) == h {
-				continue
-			}
-			desc, err := summarize(content)
-			if err != nil {
-				logf("summarize %s: %v", s.Name, err)
-				continue
-			}
-			if desc == "" {
-				continue
-			}
-			if err := client.SetSessionEnv(full, "@claudes-description", desc); err != nil {
-				logf("set env %s: %v", s.Name, err)
-				continue
-			}
-			cache.set(s.Name, h)
-			logf("described %s: %s", s.Name, desc)
-		}
-		cache.save()
-
-		// Wait for the next main tick, but service tab reconciliation on
-		// the faster cadence in between so tab cleanup feels snappy when an
-		// agent self-exits.
+		// Wait for the next main tick, servicing the completion sweep on the
+		// faster cadence so a finished run's worktree is torn down promptly.
 		mainDeadline := time.After(tick)
 		waiting := true
 		for waiting {
@@ -379,9 +310,99 @@ func Run(cfg *config.Config) error {
 			case <-mainDeadline:
 				waiting = false
 			case <-time.After(mTick):
-				reconcile()
+				sweepCompletions(client, cfg, store)
+				if ambientEnabled() {
+					reconcile()
+				}
 			}
 		}
+	}
+}
+
+// ambientEnabled reports whether the daemon's legacy ambient jobs (pane
+// summaries, ccusage cost, tab reconcile) should run. Off by default.
+func ambientEnabled() bool { return os.Getenv("CLAUDES_DAEMON_AMBIENT") == "1" }
+
+// runAmbient performs the legacy per-tick work: tab reconcile, session-id
+// backfill, ccusage cost stamping, and pane summaries. Preserved behind
+// CLAUDES_DAEMON_AMBIENT for debugging.
+func runAmbient(client *tmux.Client, cfg *config.Config, cache *hashCache,
+	tabReconcile func(map[string]bool), sessions []session.Session) {
+	if tabReconcile != nil {
+		live := map[string]bool{}
+		for _, s := range sessions {
+			live[s.Name] = true
+		}
+		tabReconcile(live)
+	}
+	ids := map[string]string{}
+	claimed := map[string]bool{}
+	for _, s := range sessions {
+		if s.SessionID != "" {
+			ids[s.Name] = s.SessionID
+			claimed[s.SessionID] = true
+		}
+	}
+	for _, s := range sessions {
+		if s.SessionID != "" {
+			continue
+		}
+		id := cost.ResolveSessionID(s.Dir, claimed)
+		if id == "" {
+			continue
+		}
+		claimed[id] = true
+		ids[s.Name] = id
+		full := session.FullName(cfg.Prefix, s.Name)
+		if err := client.SetSessionEnv(full, "CLAUDES_SESSION_ID", id); err != nil {
+			logf("backfill session id %s: %v", s.Name, err)
+		}
+	}
+	if len(ids) > 0 {
+		if costs, err := cost.SessionCosts(); err != nil {
+			logf("cost: %v", err)
+		} else {
+			for _, s := range sessions {
+				usd, ok := costs[ids[s.Name]]
+				if !ok {
+					continue
+				}
+				formatted := strconv.FormatFloat(usd, 'f', 2, 64)
+				if formatted == s.Cost {
+					continue
+				}
+				full := session.FullName(cfg.Prefix, s.Name)
+				if err := client.SetSessionEnv(full, "@claudes-cost", formatted); err != nil {
+					logf("set cost %s: %v", s.Name, err)
+				}
+			}
+		}
+	}
+	for _, s := range sessions {
+		full := session.FullName(cfg.Prefix, s.Name)
+		content, err := client.CapturePane(full, captureLines)
+		if err != nil {
+			logf("capture %s: %v", s.Name, err)
+			continue
+		}
+		h := hash(content)
+		if cache.get(s.Name) == h {
+			continue
+		}
+		desc, err := summarize(content)
+		if err != nil {
+			logf("summarize %s: %v", s.Name, err)
+			continue
+		}
+		if desc == "" {
+			continue
+		}
+		if err := client.SetSessionEnv(full, "@claudes-description", desc); err != nil {
+			logf("set env %s: %v", s.Name, err)
+			continue
+		}
+		cache.set(s.Name, h)
+		logf("described %s: %s", s.Name, desc)
 	}
 }
 

@@ -1,6 +1,6 @@
 ---
 name: claudes
-description: Manage Claude Code sessions via the `claudes` CLI — a screen-like session manager backed by tmux. Use when the user asks to create, list, attach, send messages to, rename, read output from, or stop background Claude Code sessions, or to queue/claim/hand off tasks between agents.
+description: Manage Claude Code sessions via the `claudes` CLI — a screen-like session manager backed by tmux. Use when the user asks to create, list, attach, send messages to, rename, read output from, or stop background Claude Code sessions, or to set up recurring scheduled prompts.
 ---
 
 # claudes — Claude Code session manager
@@ -11,7 +11,7 @@ description: Manage Claude Code sessions via the `claudes` CLI — a screen-like
 
 - The user wants to spawn, query, or kill a Claude Code session running in the background.
 - The user wants to send a message to an already-running agent and read what it produced.
-- The user wants to queue work for other agents to pick up, or claim/complete shared tasks (`claudes tasks`).
+- The user wants to set up a recurring scheduled prompt — run a prompt every N minutes / daily / once at a time (`claudes tasks`).
 - The user mentions `claudes new`, `claudes send`, `claudes ls`, or similar.
 
 For visual layout (windows, workspaces, panes, browsers, notifications), use the `cmux` skill instead. For sending input to a *non-Claude* shell, use `cmux send`/`cmux send-key`. `claudes` is specifically for Claude Code sessions.
@@ -39,15 +39,15 @@ For visual layout (windows, workspaces, panes, browsers, notifications), use the
 | Manage projects | `claudes project {list,add,rm,show}` |
 | Read/write top-level config | `claudes config {show,get,set}` |
 | Manage the daemon | `claudes daemon {status,start,stop,logs}` |
-| Cross-agent task queue | `claudes tasks` (dashboard) / `claudes tasks {add,claim,complete,rm,show,ls}` |
+| Recurring scheduled prompts | `claudes tasks {add,ls,enable,disable,run,logs,rm}` (or the main TUI's schedules section) |
 
 Most commands accept no name and open an interactive picker.
 
-## Default model + auto-summarizing daemon
+## Default model + scheduler daemon
 
 `claudes` always passes `--model` to the spawned `claude` (default `opus`). Without this, a Haiku-running parent would silently produce Haiku sessions by inheritance. Override per-session via `--model X` or shortcuts.
 
-A background daemon auto-spawns on first `claudes new`/`open`/`ls` and self-exits when no sessions remain. Every minute (or `CLAUDES_DAEMON_TICK=15s` for dev) it captures each session's pane, hashes it, and asks `claude -p --model haiku` for an 8-12 word description. The result is written to the tmux session env (`@claudes-description`) and shown in `claudes ls`. State files live in `~/.cache/claudes/`. To force-stop the daemon: `claudes daemon stop`. It'll respawn next time you run `claudes ls` (assuming sessions exist).
+A background daemon hosts the scheduler. It auto-spawns when you add/enable a scheduled prompt (`claudes daemon start` to spawn manually) and self-exits once there are no live sessions, no enabled schedules, and no run in flight. Each tick (default 60s; `CLAUDES_DAEMON_TICK=10s` for dev) it fires due schedules and tears down finished runs. State files live in `~/.cache/claudes/`; force-stop with `claudes daemon stop`, inspect with `claudes daemon logs`. The old ambient jobs (pane summaries, ccusage cost, tab reconcile) are off by default — set `CLAUDES_DAEMON_AMBIENT=1` to bring them back.
 
 ## Cost tracking
 
@@ -107,23 +107,25 @@ claudes status --clear                                  # hand control back to t
 - The `--state` keyword tints the left rail: `working`→green, `waiting`/`blocked`→yellow, `done`/`idle`→blue. Any other word still shows as a `[chip]` but doesn't change the color.
 - Good practice for long-running agents: call it when you start a phase ("running migration"), when you get stuck (`--state blocked`), and when you finish (`--state done`). It's how a human glancing at `claudes ls` knows what each agent is up to without attaching.
 
-## Cross-agent task queue
+## Scheduled prompts (`claudes tasks`)
 
-`claudes tasks` is a shared queue so agents (or you) can hand work to each other. State lives in `~/.cache/claudes/tasks.json`, guarded by a file lock — `claim` is a safe compare-and-set, so two agents can't grab the same task.
+`claudes tasks` is recurring scheduled prompts: save a prompt + a cadence, and the daemon fires it on schedule. Each firing spawns an ephemeral `claude -p` session **in its own throwaway git worktree** (`<repo>/../<repo>-worktrees/<name>-<ts>`), captures its output, then tears the worktree down. State lives in `~/.cache/claudes/schedules.json`; per-run output in `~/.cache/claudes/schedules/<id>/<runID>.log`.
 
 ```
-claudes tasks add "wire up the export endpoint"        # open queue — anyone can claim
-claudes tasks add --to bob "review the migration"      # directed at bob (also pokes bob to claim)
-claudes tasks claim                                     # claim the oldest task open to you
-claudes tasks claim 3                                   # claim a specific task by id
-claudes tasks complete --result "done, see PR #42"      # complete your claimed task; reports back to its creator
-claudes tasks complete 3                                # complete a specific task
-claudes tasks ls                                        # plain list; `claudes tasks` alone = live dashboard
+claudes tasks add --kind interval --every 5m  --name lint    --dir <repo> --prompt "..."   # every 5m, 9–18 window
+claudes tasks add --kind daily    --at 09:00   --name standup --dir <repo> --prompt "..."   # daily at 09:00
+claudes tasks add --kind once     --at "2026-06-20 14:00" --name oneoff --dir <repo> --prompt "..."
+claudes tasks ls                       # id, name, cadence, enabled, next-fire, last-run status
+claudes tasks enable 3 / disable 3     # toggle
+claudes tasks run 3                    # fire now (ignores window + enabled)
+claudes tasks logs 3                   # run history; `--run <id>` dumps one run's captured output
+claudes tasks rm 3                     # delete schedule + its run history
 ```
 
-- **Identity** (who created/claimed) is the current session name (same as `claudes whoami`). From a plain shell, pass `--as <name>`; humans can create/complete but not claim.
-- **Report-back**: `complete` messages the task's creating agent via `claudes write` (skipped when the creator is a human or no longer running).
-- **Completing** with no id picks your single claimed task; if you have several, pass the id. The dashboard's `x` key completes without a note — use the CLI `--result` to attach one.
+- **Kinds**: `interval` (`--every 5m`), `daily` (`--at HH:MM`), `once` (`--at <datetime>`). `interval`/`daily` only fire inside the active window (default 9–18, override `--window 9-18`); `once` ignores the window and auto-disables after firing.
+- **Permissions**: runs use `claude -p --permission-mode auto` so they don't hang on prompts (override with `--perm`). Needs Claude Code ≥2.1.83 and Opus 4.6+/Sonnet 4.6+.
+- **Overlap**: if a schedule's previous run is still live, the next fire is skipped.
+- **`--dir` must be a git repo** (the worktree hangs off its HEAD). Fully editable from the main TUI's bottom **schedules** section — `enter` opens a schedule's run logs; `n`/`e`/`x`/`space`/`R` add/edit/delete/toggle/run-now.
 
 ## Agent groups
 

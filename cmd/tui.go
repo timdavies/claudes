@@ -14,6 +14,7 @@ import (
 
 	"github.com/timdavies/claudes/internal/config"
 	"github.com/timdavies/claudes/internal/pinned"
+	"github.com/timdavies/claudes/internal/schedule"
 	"github.com/timdavies/claudes/internal/session"
 	"github.com/timdavies/claudes/internal/tmux"
 )
@@ -50,6 +51,8 @@ func runTUI() error {
 
 	m := tuiModel{cfg: cfg, client: client, width: terminalWidth()}
 	m.rows = loadAgentRows(client, cfg)
+	m.schedules, m.schedLastRun = loadSchedulesNow()
+	(&m).normalizeRegion()
 
 	p := tea.NewProgram(m, tea.WithAltScreen())
 	final, err := p.Run()
@@ -80,6 +83,9 @@ const (
 	modeList tuiMode = iota
 	modeConfirmKill
 	modeNew
+	modeScheduleLogs
+	modeScheduleForm
+	modeScheduleConfirmRm
 )
 
 type tuiModel struct {
@@ -93,9 +99,18 @@ type tuiModel struct {
 	height int
 	status string // transient one-liner
 
+	// Scheduled prompts occupy a second region below the agent list.
+	schedules    []schedule.Schedule
+	schedLastRun map[string]string // id -> last-run label
+	region       tuiRegion
+	schedCursor  int
+
 	mode       tuiMode
-	confirmRow agentRow // row pending kill confirmation (mode == modeConfirmKill)
-	form       *newForm // active new-agent form (mode == modeNew)
+	confirmRow agentRow          // row pending kill confirmation (mode == modeConfirmKill)
+	form       *newForm          // active new-agent form (mode == modeNew)
+	logView    *schedLogView     // run-logs view (mode == modeScheduleLogs)
+	schedForm  *schedForm        // add/edit schedule form (mode == modeScheduleForm)
+	schedToRm  schedule.Schedule // schedule pending delete (mode == modeScheduleConfirmRm)
 
 	exitAction exitKind
 	exitName   string
@@ -141,10 +156,23 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tickMsg:
 		// Kick off an async refresh; the next tick is scheduled when it lands.
-		return m, loadRowsCmd(m.client, m.cfg)
+		return m, tea.Batch(loadRowsCmd(m.client, m.cfg), loadSchedulesCmd())
 	case rowsMsg:
 		m.rows = mergeRows(m.rows, []agentRow(msg), &m.cursor)
+		(&m).normalizeRegion()
 		return m, tick()
+	case schedulesMsg:
+		m.schedules = msg.schedules
+		m.schedLastRun = msg.lastRun
+		(&m).normalizeRegion()
+		return m, nil
+	case schedActionMsg:
+		if msg.err != nil {
+			m.status = msg.err.Error()
+		} else {
+			m.status = msg.status
+		}
+		return m, loadSchedulesCmd()
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
@@ -192,6 +220,12 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateConfirmKill(msg)
 		case modeNew:
 			return m.updateNewForm(msg)
+		case modeScheduleLogs:
+			return m.updateScheduleLogs(msg)
+		case modeScheduleForm:
+			return m.updateScheduleForm(msg)
+		case modeScheduleConfirmRm:
+			return m.updateScheduleConfirmRm(msg)
 		default:
 			return m.updateList(msg)
 		}
@@ -200,6 +234,9 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m tuiModel) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.region == regionSchedules {
+		return m.updateScheduleList(msg)
+	}
 	switch msg.String() {
 	case "q", "esc", "ctrl+c":
 		return m, tea.Quit
@@ -212,6 +249,9 @@ func (m tuiModel) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.cursor < len(m.rows)-1 {
 			m.cursor++
 			m.col = 0
+		} else if len(m.schedules) > 0 {
+			m.region = regionSchedules
+			m.schedCursor = 0
 		}
 	case "right", "l":
 		// Step onto the PR cell, but only when this row actually has one.
@@ -401,23 +441,71 @@ func (m tuiModel) activate() (tea.Model, tea.Cmd) {
 }
 
 func (m tuiModel) View() string {
-	if m.mode == modeNew && m.form != nil {
-		return m.form.view(m.width, m.height)
+	switch m.mode {
+	case modeNew:
+		if m.form != nil {
+			return m.form.view(m.width, m.height)
+		}
+	case modeScheduleForm:
+		if m.schedForm != nil {
+			return m.schedForm.view(m.width, m.height)
+		}
+	case modeScheduleLogs:
+		if m.logView != nil {
+			return m.logView.view(m.width, m.height)
+		}
 	}
-	if len(m.rows) == 0 {
+	if len(m.rows) == 0 && len(m.schedules) == 0 {
 		return "no sessions — press n to spawn one\n\nn new  q quit\n"
 	}
-	list := renderAgents(m.rows, m.cursor, m.col, m.width)
-	var footer string
-	if m.mode == modeConfirmKill {
+
+	// Body: the agent list, then the schedules section. Only the active region
+	// shows a cursor; the inactive one is passed -1.
+	agentsCursor, schedCursor := -1, -1
+	if m.region == regionAgents {
+		agentsCursor = m.cursor
+	} else {
+		schedCursor = m.schedCursor
+	}
+	body := ""
+	if len(m.rows) > 0 {
+		body = renderAgents(m.rows, agentsCursor, m.col, m.width)
+	}
+	if sched := renderSchedules(m.schedules, m.schedLastRun, schedCursor, m.width); sched != "" {
+		if body != "" {
+			body += "\n"
+		}
+		body += sched
+	}
+
+	footer := m.footer()
+	if m.height <= 0 {
+		return body + "\n" + footer + "\n"
+	}
+	pad := m.height - lipgloss.Height(body) - lipgloss.Height(footer)
+	if pad < 1 {
+		pad = 1
+	}
+	return body + strings.Repeat("\n", pad) + footer
+}
+
+// footer renders the bottom status + key hints for the current mode/region.
+func (m tuiModel) footer() string {
+	switch m.mode {
+	case modeConfirmKill:
 		verb := "kill"
 		if m.confirmRow.Pinned {
 			verb = "pause"
 		}
-		footer = confirmStyle.Render(fmt.Sprintf("%s %s? ", verb, m.confirmRow.Name)) +
-			cardMeta.Render("y/n")
+		return confirmStyle.Render(fmt.Sprintf("%s %s? ", verb, m.confirmRow.Name)) + cardMeta.Render("y/n")
+	case modeScheduleConfirmRm:
+		return confirmStyle.Render(fmt.Sprintf("delete %s? ", m.schedToRm.Name)) + cardMeta.Render("y/n")
+	}
+	var hint string
+	if m.region == regionSchedules {
+		hint = "↑/↓ move  enter logs  n new  e edit  space on/off  R run  x delete  q quit"
 	} else {
-		hint := "↑/↓ move  enter focus  n new  p pin  x kill  r refresh  q quit"
+		hint = "↑/↓ move  enter focus  n new  p pin  x kill  r refresh  q quit"
 		if m.cursor >= 0 && m.cursor < len(m.rows) && m.rows[m.cursor].PR != "" {
 			if m.col == 1 {
 				hint = "←/→ select  enter open PR  ↑/↓ move  n new  p pin  x kill  q quit"
@@ -425,22 +513,12 @@ func (m tuiModel) View() string {
 				hint = "↑/↓ move  →PR  enter focus  n new  p pin  x kill  r refresh  q quit"
 			}
 		}
-		footer = cardMeta.Render(hint)
-		if m.status != "" {
-			footer = cardMeta.Render(m.status) + "\n" + footer
-		}
 	}
-	// Pin the footer to the bottom of the screen: pad the gap between the list
-	// and the controls so the controls sit on the last row. Falls back to a
-	// simple stacked layout until we've learned the window height.
-	if m.height <= 0 {
-		return list + "\n" + footer + "\n"
+	footer := cardMeta.Render(hint)
+	if m.status != "" {
+		footer = cardMeta.Render(m.status) + "\n" + footer
 	}
-	pad := m.height - lipgloss.Height(list) - lipgloss.Height(footer)
-	if pad < 1 {
-		pad = 1
-	}
-	return list + strings.Repeat("\n", pad) + footer
+	return footer
 }
 
 // resolveTab finds the backend tab for r, falling back through:

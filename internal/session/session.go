@@ -87,6 +87,11 @@ func List(client *tmux.Client, cfg *config.Config) ([]Session, error) {
 			continue
 		}
 		env, _ := client.SessionEnv(in.Name) // best-effort
+		// Scheduled-prompt runs are ephemeral and surfaced through the schedules
+		// section, not the agent list — keep them out of ls/TUI/daemon-summaries.
+		if env["CLAUDES_SCHEDULED"] == "1" {
+			continue
+		}
 		s := Session{
 			Name:        DisplayName(cfg.Prefix, in.Name),
 			Dir:         in.Path,

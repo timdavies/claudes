@@ -1,0 +1,243 @@
+package daemon
+
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+	"time"
+
+	"github.com/timdavies/claudes/internal/config"
+	"github.com/timdavies/claudes/internal/schedule"
+	"github.com/timdavies/claudes/internal/session"
+	"github.com/timdavies/claudes/internal/tmux"
+	"github.com/timdavies/claudes/internal/worktree"
+)
+
+const (
+	scheduleStoreFilename = "schedules.json"
+	runDoneSentinel       = "__CLAUDES_RUN_DONE__"
+)
+
+func schedulesPath(dir string) string { return filepath.Join(dir, scheduleStoreFilename) }
+
+// ScheduleStore opens the schedule store rooted in the cache dir.
+func ScheduleStore() (*schedule.Store, error) {
+	dir, err := CacheDir()
+	if err != nil {
+		return nil, err
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return nil, err
+	}
+	return schedule.NewStore(schedulesPath(dir)), nil
+}
+
+// maxRunDuration caps a single run; a run still live past it is killed and torn
+// down (so a prompt that hangs despite --permission-mode auto can't wedge a
+// schedule forever). CLAUDES_SCHED_MAX_RUN overrides.
+func maxRunDuration() time.Duration {
+	if v := os.Getenv("CLAUDES_SCHED_MAX_RUN"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			return d
+		}
+	}
+	return 30 * time.Minute
+}
+
+// fireDue fires every enabled, due schedule (called on the main tick).
+func fireDue(client *tmux.Client, cfg *config.Config, store *schedule.Store, dir string) {
+	now := time.Now()
+	for _, sc := range store.All() {
+		if !sc.Enabled || !schedule.Due(sc, now) {
+			continue
+		}
+		if previousRunLive(client, cfg, store, dir, sc) {
+			logf("skip %s (%s): previous run still live", sc.ID, sc.Name)
+			continue
+		}
+		if err := fireOne(client, cfg, store, dir, sc); err != nil {
+			logf("fire %s: %v", sc.ID, err)
+		}
+	}
+}
+
+// previousRunLive reports whether the schedule's last run is still running. If
+// the run's session is gone but the run was never finalized (e.g. daemon died
+// mid-run), it reconciles it here rather than blocking this fire.
+func previousRunLive(client *tmux.Client, cfg *config.Config, store *schedule.Store, dir string, sc schedule.Schedule) bool {
+	if sc.LastRunID == "" {
+		return false
+	}
+	r, err := store.GetRun(sc.LastRunID)
+	if err != nil || r.Status != schedule.RunRunning {
+		return false
+	}
+	if live, _ := client.Has(session.FullName(cfg.Prefix, r.Session)); live {
+		return true
+	}
+	finalizeRun(store, r, schedule.RunInterrupted)
+	return false
+}
+
+// fireOne creates the worktree, spawns the ephemeral session, tees its output
+// to a logfile, and records the run.
+func fireOne(client *tmux.Client, cfg *config.Config, store *schedule.Store, dir string, sc schedule.Schedule) error {
+	ts := time.Now().Format("20060102-150405")
+	runID := sc.ID + "-" + ts
+	branch := fmt.Sprintf("claudes-sched-%s-%s", sc.ID, ts)
+
+	repo, err := worktree.RepoRoot(sc.Dir)
+	if err != nil {
+		return err
+	}
+	wt := worktree.SiblingPath(repo, sc.Name, ts)
+	if err := worktree.Create(repo, branch, wt); err != nil {
+		return err
+	}
+
+	logRel := filepath.Join("schedules", sc.ID, runID+".log")
+	logAbs := filepath.Join(dir, logRel)
+	if err := os.MkdirAll(filepath.Dir(logAbs), 0o755); err != nil {
+		_ = worktree.Teardown(repo, branch, wt)
+		return err
+	}
+
+	resolved, err := cfg.Resolve(wt, sc.Project, wt)
+	if err != nil {
+		_ = worktree.Teardown(repo, branch, wt)
+		return err
+	}
+	model := sc.Model
+	if model == "" {
+		model = resolved.Model
+	}
+	perm := sc.PermMode
+	if perm == "" {
+		perm = "auto"
+	}
+
+	sessName := "sched-" + runID
+	full := session.FullName(cfg.Prefix, sessName)
+	extraEnv := []string{
+		"CLAUDES_SCHEDULED=1",
+		"CLAUDES_SCHEDULE_ID=" + sc.ID,
+		"CLAUDES_RUN_ID=" + runID,
+		"CLAUDES_NAME=" + sessName,
+		"CLAUDES_PROJECT=" + resolved.Project,
+		"CLAUDES_DIR=" + wt,
+		"CLAUDES_PROMPT=" + sc.Prompt,
+		"CLAUDES_PERM=" + perm,
+	}
+	if err := client.NewSession(full, wt, extraEnv, buildFireCmdline(model, resolved.DefaultArgs)); err != nil {
+		_ = worktree.Teardown(repo, branch, wt)
+		return err
+	}
+	_ = client.PipePaneStart(full, logAbs)
+
+	_, err = store.MarkFired(sc.ID, schedule.Run{
+		ID: runID, ScheduleID: sc.ID, Session: sessName,
+		Repo: repo, Branch: branch, Worktree: wt, LogFile: logRel,
+	})
+	if err != nil {
+		return err
+	}
+	logf("fired %s -> %s (%s)", sc.ID, runID, wt)
+	return nil
+}
+
+// buildFireCmdline wraps `claude -p` in a shell so the prompt comes from the
+// session env (no argv quoting), and a trailing sentinel marks completion in
+// the logfile. The prompt and permission mode arrive via CLAUDES_PROMPT/
+// CLAUDES_PERM; model and default_args are trusted config and are shell-quoted.
+func buildFireCmdline(model string, defaultArgs []string) []string {
+	script := `claude -p "$CLAUDES_PROMPT" --permission-mode "$CLAUDES_PERM"`
+	if model != "" {
+		script += " --model " + shellQuote(model)
+	}
+	for _, a := range defaultArgs {
+		script += " " + shellQuote(a)
+	}
+	script += "; echo " + runDoneSentinel
+	return []string{"sh", "-lc", script}
+}
+
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+// sweepCompletions finalizes runs whose session has exited, and kills+finalizes
+// runs that outran maxRunDuration (fast tick).
+func sweepCompletions(client *tmux.Client, cfg *config.Config, store *schedule.Store) {
+	limit := maxRunDuration()
+	for _, r := range store.RunningRuns() {
+		full := session.FullName(cfg.Prefix, r.Session)
+		live, err := client.Has(full)
+		if err != nil {
+			continue
+		}
+		if live {
+			if started, perr := time.Parse(time.RFC3339, r.StartedAt); perr == nil && time.Since(started) > limit {
+				_ = client.Kill(full)
+				finalizeRun(store, r, schedule.RunTimedOut)
+			}
+			continue
+		}
+		finalizeRun(store, r, schedule.RunDone)
+	}
+}
+
+// finalizeRun records the run's terminal status then tears down its worktree.
+func finalizeRun(store *schedule.Store, r schedule.Run, status schedule.RunStatus) {
+	r.Status = status
+	r.FinishedAt = time.Now().UTC().Format(time.RFC3339)
+	_ = store.UpdateRun(r)
+	teardownRun(store, r)
+}
+
+// teardownRun removes a finished run's worktree + branch, idempotently. On
+// failure it leaves TornDown=false so the startup sweep retries.
+func teardownRun(store *schedule.Store, r schedule.Run) {
+	if r.TornDown || r.Repo == "" || r.Branch == "" {
+		return
+	}
+	if err := worktree.Teardown(r.Repo, r.Branch, r.Worktree); err != nil {
+		logf("teardown %s: %v", r.ID, err)
+		return
+	}
+	r.TornDown = true
+	_ = store.UpdateRun(r)
+}
+
+// reconcileOrphans runs at daemon startup: finalize runs whose session died
+// while the daemon was down, and retry any teardown that didn't complete.
+func reconcileOrphans(client *tmux.Client, cfg *config.Config, store *schedule.Store) {
+	for _, r := range store.RunningRuns() {
+		if live, _ := client.Has(session.FullName(cfg.Prefix, r.Session)); live {
+			continue // still going — the sweep will adopt it
+		}
+		finalizeRun(store, r, schedule.RunInterrupted)
+	}
+	for _, r := range store.UnfinalizedRuns() {
+		teardownRun(store, r)
+	}
+}
+
+// FireNow fires a schedule immediately, ignoring its window and enabled state
+// (honoring overlap-skip). Used by `claudes tasks run` and the TUI. The running
+// daemon owns completion + teardown; callers ensure one is up first.
+func FireNow(cfg *config.Config, store *schedule.Store, id string) error {
+	dir, err := CacheDir()
+	if err != nil {
+		return err
+	}
+	client := tmux.New(cfg.TmuxSocket, cfg.TmuxConfig)
+	sc, err := store.Get(id)
+	if err != nil {
+		return err
+	}
+	if previousRunLive(client, cfg, store, dir, sc) {
+		return fmt.Errorf("previous run still in progress")
+	}
+	return fireOne(client, cfg, store, dir, sc)
+}
