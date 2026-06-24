@@ -154,7 +154,24 @@ func Ensure(cfg *config.Config, sessions []session.Session, spawnAlways bool) er
 	if Sandboxed() {
 		return ErrSandboxed
 	}
-	return spawn()
+	if err := spawn(); err != nil {
+		return err
+	}
+	// spawn() is async (detached child); wait for it to acquire the pidfile so
+	// callers (and `daemon start`'s status print) see it as up, not racing.
+	waitAlive(dir, 2*time.Second)
+	return nil
+}
+
+// waitAlive blocks until a daemon is detectably running or the deadline passes.
+func waitAlive(dir string, max time.Duration) {
+	deadline := time.Now().Add(max)
+	for time.Now().Before(deadline) {
+		if alive, _ := daemonAlive(dir); alive {
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
 }
 
 // Sandboxed reports whether this process runs under Claude Code's command
