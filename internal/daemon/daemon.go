@@ -135,7 +135,7 @@ func Ensure(cfg *config.Config, sessions []session.Session, spawnAlways bool) er
 		return err
 	}
 
-	if alive, entry := readPid(dir); alive {
+	if alive, entry := daemonAlive(dir); alive {
 		// Self-upgrade: if the daemon's binary path differs from the CLI
 		// that's invoking us, stop the old daemon and respawn so post-
 		// `make install` upgrades take effect on next CLI call.
@@ -150,11 +150,17 @@ func Ensure(cfg *config.Config, sessions []session.Session, spawnAlways bool) er
 	return spawn()
 }
 
-// readPid stats and verifies the pidfile. Returns (alive, entry).
-func readPid(dir string) (bool, pidEntry) {
+// heartbeatStaleAfter bounds how old the heartbeat may be before a daemon that
+// still holds nothing is considered dead by the fallback path. Generous (the
+// daemon writes the heartbeat every main tick, ≤60s) so a slow tick or brief
+// stall doesn't read as dead.
+const heartbeatStaleAfter = 5 * time.Minute
+
+// readPidEntry parses the pidfile without probing liveness.
+func readPidEntry(dir string) pidEntry {
 	b, err := os.ReadFile(pidPath(dir))
 	if err != nil {
-		return false, pidEntry{}
+		return pidEntry{}
 	}
 	var e pidEntry
 	if err := json.Unmarshal(b, &e); err != nil || e.PID <= 0 {
@@ -163,19 +169,52 @@ func readPid(dir string) (bool, pidEntry) {
 			e = pidEntry{PID: pid}
 		}
 	}
-	if e.PID <= 0 {
-		return false, e
+	return e
+}
+
+// daemonAlive is the single source of truth for "is a daemon running", shared
+// by status/stop/start. It probes the pidfile's advisory flock — the daemon
+// holds it for its whole life and the kernel releases it on death — which,
+// unlike syscall.Kill(pid,0), is reliable from a sandboxed CLI (signalling
+// another process can be denied under seatbelt; opening a file to flock it is
+// not). If the pidfile can't be opened at all, it falls back to heartbeat
+// freshness.
+func daemonAlive(dir string) (bool, pidEntry) {
+	entry := readPidEntry(dir)
+	// O_RDONLY is enough to take an flock, and only needs read permission —
+	// which the sandbox grants far more readily than write.
+	f, err := os.OpenFile(pidPath(dir), os.O_RDONLY, 0)
+	if err != nil {
+		return heartbeatFresh(dir), entry
 	}
-	if syscall.Kill(e.PID, 0) == nil {
-		return true, e
+	defer f.Close()
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		// Couldn't take the lock → the daemon holds it → alive.
+		return true, entry
 	}
-	return false, e
+	// We took the lock → nobody holds it → no daemon. Release and report dead.
+	_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+	return false, entry
+}
+
+// heartbeatFresh reports whether the heartbeat file was written recently enough
+// to imply a live daemon. Used only as a fallback when the flock probe can't run.
+func heartbeatFresh(dir string) bool {
+	b, err := os.ReadFile(heartbeatPath(dir))
+	if err != nil {
+		return false
+	}
+	t, err := time.Parse(time.RFC3339, strings.TrimSpace(string(b)))
+	if err != nil {
+		return false
+	}
+	return time.Since(t) < heartbeatStaleAfter
 }
 
 func waitGone(dir string, max time.Duration) {
 	deadline := time.Now().Add(max)
 	for time.Now().Before(deadline) {
-		if alive, _ := readPid(dir); !alive {
+		if alive, _ := daemonAlive(dir); !alive {
 			return
 		}
 		time.Sleep(50 * time.Millisecond)
@@ -545,20 +584,28 @@ func (c *hashCache) set(name, h string) {
 	c.data[name] = hashEntry{Hash: h, UpdatedAt: time.Now().UTC().Format(time.RFC3339)}
 }
 
-// Stop sends SIGTERM to a running daemon (if any). Returns nil if none.
+// Stop sends SIGTERM to a running daemon (if any) and confirms it exits.
+// Returns nil only when no daemon is running or one was actually stopped — so
+// the CLI never prints "stopped" over a daemon that's still alive.
 func Stop() error {
 	dir, err := CacheDir()
 	if err != nil {
 		return err
 	}
-	alive, entry := readPid(dir)
+	alive, entry := daemonAlive(dir)
 	if !alive {
 		return nil
 	}
+	if entry.PID <= 0 {
+		return fmt.Errorf("daemon is running but its pidfile is unreadable — kill it manually")
+	}
 	if err := syscall.Kill(entry.PID, syscall.SIGTERM); err != nil {
-		return fmt.Errorf("kill daemon: %w", err)
+		return fmt.Errorf("found daemon pid=%d but couldn't signal it (%v) — run from a non-sandboxed shell", entry.PID, err)
 	}
 	waitGone(dir, 3*time.Second)
+	if stillAlive, _ := daemonAlive(dir); stillAlive {
+		return fmt.Errorf("daemon pid=%d did not exit after SIGTERM", entry.PID)
+	}
 	return nil
 }
 
@@ -568,7 +615,7 @@ func Status() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	alive, entry := readPid(dir)
+	alive, entry := daemonAlive(dir)
 	if !alive {
 		return "not running", nil
 	}
