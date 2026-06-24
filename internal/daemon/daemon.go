@@ -202,6 +202,12 @@ func daemonAlive(dir string) (bool, pidEntry) {
 	// which the sandbox grants far more readily than write.
 	f, err := os.OpenFile(pidPath(dir), os.O_RDONLY, 0)
 	if err != nil {
+		// The daemon removes its pidfile on exit, so a missing file means dead.
+		// Fall back to heartbeat freshness only when the file exists but can't
+		// be opened (a rarer, sandbox-ish case).
+		if os.IsNotExist(err) {
+			return false, entry
+		}
 		return heartbeatFresh(dir), entry
 	}
 	defer f.Close()
@@ -351,6 +357,15 @@ func Run(cfg *config.Config) error {
 		// The scheduler: fire what's due, finalize what's finished.
 		fireDue(client, cfg, store, dir, health)
 		sweepCompletions(client, cfg, store)
+
+		// Honor a pending stop before the (possibly slow) ccusage call, so
+		// `claudes daemon stop` doesn't wait a whole cost tick to take effect.
+		select {
+		case <-stopCh:
+			logf("daemon: SIGTERM received, exiting")
+			return nil
+		default:
+		}
 
 		// Cost stamping is cheap (one ccusage call) and Tim wants the $ figure
 		// in `claudes ls`, so it's on its own default-on gate — independent of
@@ -637,7 +652,9 @@ func Stop() error {
 	if err := syscall.Kill(entry.PID, syscall.SIGTERM); err != nil {
 		return fmt.Errorf("found daemon pid=%d but couldn't signal it (%v) — run from a non-sandboxed shell", entry.PID, err)
 	}
-	waitGone(dir, 3*time.Second)
+	// Generous: the daemon only services SIGTERM at a tick boundary, and a tick
+	// can include a multi-second ccusage call.
+	waitGone(dir, 8*time.Second)
 	if stillAlive, _ := daemonAlive(dir); stillAlive {
 		return fmt.Errorf("daemon pid=%d did not exit after SIGTERM", entry.PID)
 	}

@@ -41,6 +41,19 @@ func TestDaemonAliveFlock(t *testing.T) {
 	}
 }
 
+// TestDaemonAliveMissingPidfileIsDead guards the fix where a clean daemon exit
+// (which removes the pidfile) must read as dead even though its last heartbeat
+// is still fresh — otherwise `start` no-ops for ~5 minutes after a restart.
+func TestDaemonAliveMissingPidfileIsDead(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(heartbeatPath(dir), []byte(time.Now().UTC().Format(time.RFC3339)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if alive, _ := daemonAlive(dir); alive {
+		t.Fatal("missing pidfile must read as dead even with a fresh heartbeat")
+	}
+}
+
 func TestFireHealthThreshold(t *testing.T) {
 	dir := t.TempDir()
 	h := &fireHealth{dir: dir}
