@@ -8,6 +8,8 @@ import (
 
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
+
+	"github.com/timdavies/claudes/internal/daemon"
 )
 
 var lsProject string
@@ -54,6 +56,9 @@ func runLs(cmd *cobra.Command, args []string) error {
 	ensureDaemonForCmd(false)
 
 	fmt.Fprint(os.Stdout, renderAgents(rows, -1, 0, terminalWidth()))
+	if w := daemon.HealthWarning(); w != "" {
+		fmt.Fprintln(os.Stdout, "\n"+w)
+	}
 	return nil
 }
 

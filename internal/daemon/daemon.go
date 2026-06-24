@@ -138,17 +138,34 @@ func Ensure(cfg *config.Config, sessions []session.Session, spawnAlways bool) er
 	if alive, entry := daemonAlive(dir); alive {
 		// Self-upgrade: if the daemon's binary path differs from the CLI
 		// that's invoking us, stop the old daemon and respawn so post-
-		// `make install` upgrades take effect on next CLI call.
+		// `make install` upgrades take effect on next CLI call. Skip the
+		// respawn when sandboxed — a working old daemon beats a crippled new one.
 		self, err := os.Executable()
-		if err == nil && entry.Path != "" && entry.Path != self {
+		if err == nil && entry.Path != "" && entry.Path != self && !Sandboxed() {
 			_ = syscall.Kill(entry.PID, syscall.SIGTERM)
 			waitGone(dir, 3*time.Second)
 		} else {
 			return nil
 		}
 	}
+	// Don't spawn a daemon that would inherit a crippling sandbox profile —
+	// every scheduled run's `git worktree add` would EPERM. Surface a hint
+	// instead so the user starts it from a real shell.
+	if Sandboxed() {
+		return ErrSandboxed
+	}
 	return spawn()
 }
+
+// Sandboxed reports whether this process runs under Claude Code's command
+// sandbox (seatbelt). A daemon spawned from here inherits that profile and
+// can't escape it, so writes outside the cwd — like creating a run's git
+// worktree — fail with EPERM. SANDBOX_RUNTIME is set only while sandboxed.
+func Sandboxed() bool { return os.Getenv("SANDBOX_RUNTIME") != "" }
+
+// ErrSandboxed is returned by Ensure when it declines to spawn a daemon from a
+// sandboxed process (which would produce a crippled, silently-failing daemon).
+var ErrSandboxed = errors.New("refusing to spawn the daemon from a sandboxed session")
 
 // heartbeatStaleAfter bounds how old the heartbeat may be before a daemon that
 // still holds nothing is considered dead by the fallback path. Generous (the
@@ -281,6 +298,9 @@ func Run(cfg *config.Config) error {
 	// CLAUDES_DAEMON_AMBIENT=1 to bring them back.
 	store := schedule.NewStore(schedulesPath(dir))
 	reconcileOrphans(client, cfg, store)
+	// Fresh process → no failures yet; drop any stale health from a prior run.
+	clearHealth(dir)
+	health := &fireHealth{dir: dir}
 
 	tick := tickInterval()
 	mTick := tabTickInterval()
@@ -329,7 +349,7 @@ func Run(cfg *config.Config) error {
 		}
 
 		// The scheduler: fire what's due, finalize what's finished.
-		fireDue(client, cfg, store, dir)
+		fireDue(client, cfg, store, dir, health)
 		sweepCompletions(client, cfg, store)
 
 		if ambientEnabled() {
@@ -620,7 +640,32 @@ func Status() (string, error) {
 		return "not running", nil
 	}
 	hb, _ := os.ReadFile(heartbeatPath(dir))
-	return fmt.Sprintf("running pid=%d binary=%s last_tick=%s", entry.PID, entry.Path, strings.TrimSpace(string(hb))), nil
+	out := fmt.Sprintf("running pid=%d binary=%s last_tick=%s", entry.PID, entry.Path, strings.TrimSpace(string(hb)))
+	if h, ok := ReadHealth(dir); ok {
+		out += fmt.Sprintf("\n⚠ %d consecutive fire failures: %s", h.Failures, h.Error)
+		if IsPermErr(h.Error) {
+			out += "\n  → looks sandboxed; restart from a non-sandboxed shell: claudes daemon stop && claudes daemon start"
+		}
+	}
+	return out, nil
+}
+
+// HealthWarning returns a one-line warning if the daemon's fires are failing,
+// or "" when healthy. Used by `claudes ls`/the TUI to surface silent failures.
+func HealthWarning() string {
+	dir, err := CacheDir()
+	if err != nil {
+		return ""
+	}
+	h, ok := ReadHealth(dir)
+	if !ok {
+		return ""
+	}
+	msg := fmt.Sprintf("⚠ daemon: %d consecutive scheduled-run failures — %s", h.Failures, h.Error)
+	if IsPermErr(h.Error) {
+		msg += " (restart it from a non-sandboxed shell)"
+	}
+	return msg
 }
 
 // LogPath returns the daemon log file path (used by `claudes daemon logs`).

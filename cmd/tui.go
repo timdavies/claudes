@@ -13,6 +13,7 @@ import (
 	"golang.org/x/term"
 
 	"github.com/timdavies/claudes/internal/config"
+	"github.com/timdavies/claudes/internal/daemon"
 	"github.com/timdavies/claudes/internal/pinned"
 	"github.com/timdavies/claudes/internal/schedule"
 	"github.com/timdavies/claudes/internal/session"
@@ -104,6 +105,7 @@ type tuiModel struct {
 	schedLastRun map[string]string // id -> last-run label
 	region       tuiRegion
 	schedCursor  int
+	health       string // daemon fire-failure warning, "" when healthy
 
 	mode       tuiMode
 	confirmRow agentRow          // row pending kill confirmation (mode == modeConfirmKill)
@@ -164,6 +166,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case schedulesMsg:
 		m.schedules = msg.schedules
 		m.schedLastRun = msg.lastRun
+		m.health = daemon.HealthWarning()
 		(&m).normalizeRegion()
 		return m, nil
 	case schedActionMsg:
@@ -517,6 +520,9 @@ func (m tuiModel) footer() string {
 	footer := cardMeta.Render(hint)
 	if m.status != "" {
 		footer = cardMeta.Render(m.status) + "\n" + footer
+	}
+	if m.health != "" {
+		footer = confirmStyle.Render(m.health) + "\n" + footer
 	}
 	return footer
 }

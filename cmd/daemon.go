@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"os"
 
@@ -72,7 +73,9 @@ func runDaemonStart(_ *cobra.Command, _ []string) error {
 		return err
 	}
 	// `daemon start` is explicit — spawn even if no sessions exist.
-	if err := daemon.Ensure(cfg, sessions, true); err != nil {
+	if err := daemon.Ensure(cfg, sessions, true); errors.Is(err, daemon.ErrSandboxed) {
+		return fmt.Errorf("%s", sandboxDaemonHint)
+	} else if err != nil {
 		return err
 	}
 	s, err := daemon.Status()
@@ -136,7 +139,9 @@ func ensureDaemonForCmd(spawnAlways bool) {
 }
 
 // ensureDaemonForSchedule spawns the daemon (even with zero sessions) so it can
-// host the cron. Called whenever a schedule is added, enabled, or fired.
+// host the cron. Called whenever a schedule is added, enabled, or fired. When
+// invoked from a sandboxed session it can't spawn a usable daemon, so it prints
+// a hint to start one from a real shell rather than silently doing nothing.
 func ensureDaemonForSchedule() {
 	cfg, err := loadConfig()
 	if err != nil {
@@ -147,5 +152,13 @@ func ensureDaemonForSchedule() {
 	if err != nil {
 		return
 	}
-	_ = daemon.Ensure(cfg, sessions, true)
+	if err := daemon.Ensure(cfg, sessions, true); errors.Is(err, daemon.ErrSandboxed) {
+		fmt.Fprintln(os.Stderr, sandboxDaemonHint)
+	}
 }
+
+// sandboxDaemonHint tells the user how to start a working daemon when we're
+// sandboxed (a daemon spawned here would inherit the sandbox and every run
+// would fail with EPERM).
+const sandboxDaemonHint = "claudes: scheduler daemon not started — this session is sandboxed and a daemon spawned here couldn't create run worktrees.\n" +
+	"  Start one from a non-sandboxed shell: claudes daemon start  (in Claude Code, prefix with `!`)"

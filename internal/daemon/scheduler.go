@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -16,10 +17,92 @@ import (
 
 const (
 	scheduleStoreFilename = "schedules.json"
+	healthFilename        = "daemon.health"
 	runDoneSentinel       = "__CLAUDES_RUN_DONE__"
+	healthFailThreshold   = 3 // consecutive identical fire failures before warning
 )
 
 func schedulesPath(dir string) string { return filepath.Join(dir, scheduleStoreFilename) }
+func healthPath(dir string) string    { return filepath.Join(dir, healthFilename) }
+
+// Health is the daemon's last-known fire health, surfaced by `daemon status`
+// and `claudes ls` so repeated fire failures never go silent.
+type Health struct {
+	Failures int    `json:"failures"`
+	Error    string `json:"error"`
+	Since    string `json:"since"`
+}
+
+// fireHealth tracks consecutive identical fire failures in the running daemon
+// and stamps/clears the on-disk Health so other commands can read it.
+type fireHealth struct {
+	consecutive int
+	lastErr     string
+	since       string
+	dir         string
+}
+
+func (h *fireHealth) record(err error) {
+	msg := err.Error()
+	if msg == h.lastErr {
+		h.consecutive++
+	} else {
+		// A new failure mode: reset the count and drop any stale warning until
+		// this one recurs past the threshold.
+		h.consecutive = 1
+		h.lastErr = msg
+		h.since = time.Now().UTC().Format(time.RFC3339)
+		clearHealth(h.dir)
+	}
+	if h.consecutive >= healthFailThreshold {
+		writeHealth(h.dir, Health{Failures: h.consecutive, Error: msg, Since: h.since})
+	}
+}
+
+func (h *fireHealth) reset() {
+	if h.consecutive == 0 && h.lastErr == "" {
+		return
+	}
+	h.consecutive = 0
+	h.lastErr = ""
+	h.since = ""
+	clearHealth(h.dir)
+}
+
+func writeHealth(dir string, h Health) {
+	b, err := json.Marshal(h)
+	if err != nil {
+		return
+	}
+	tmp := healthPath(dir) + ".tmp"
+	if err := os.WriteFile(tmp, b, 0o644); err != nil {
+		return
+	}
+	_ = os.Rename(tmp, healthPath(dir))
+}
+
+func clearHealth(dir string) { _ = os.Remove(healthPath(dir)) }
+
+// ReadHealth returns the daemon's stamped health, if any (failures past the
+// warning threshold). ok=false means healthy / nothing recorded.
+func ReadHealth(dir string) (Health, bool) {
+	b, err := os.ReadFile(healthPath(dir))
+	if err != nil {
+		return Health{}, false
+	}
+	var h Health
+	if err := json.Unmarshal(b, &h); err != nil || h.Failures == 0 {
+		return Health{}, false
+	}
+	return h, true
+}
+
+// IsPermErr reports whether an error message looks like a sandbox/permission
+// denial (the signature of a daemon stuck with an inherited sandbox profile).
+func IsPermErr(msg string) bool {
+	l := strings.ToLower(msg)
+	return strings.Contains(l, "operation not permitted") || strings.Contains(l, "permission denied")
+}
 
 // ScheduleStore opens the schedule store rooted in the cache dir.
 func ScheduleStore() (*schedule.Store, error) {
@@ -45,8 +128,9 @@ func maxRunDuration() time.Duration {
 	return 30 * time.Minute
 }
 
-// fireDue fires every enabled, due schedule (called on the main tick).
-func fireDue(client *tmux.Client, cfg *config.Config, store *schedule.Store, dir string) {
+// fireDue fires every enabled, due schedule (called on the main tick). It feeds
+// each fire's outcome to the health tracker so repeated failures surface.
+func fireDue(client *tmux.Client, cfg *config.Config, store *schedule.Store, dir string, h *fireHealth) {
 	now := time.Now()
 	for _, sc := range store.All() {
 		if !sc.Enabled || !schedule.Due(sc, now) {
@@ -58,6 +142,9 @@ func fireDue(client *tmux.Client, cfg *config.Config, store *schedule.Store, dir
 		}
 		if err := fireOne(client, cfg, store, dir, sc); err != nil {
 			logf("fire %s: %v", sc.ID, err)
+			h.record(err)
+		} else {
+			h.reset()
 		}
 	}
 }

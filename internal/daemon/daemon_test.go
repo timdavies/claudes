@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"errors"
 	"os"
 	"syscall"
 	"testing"
@@ -37,6 +38,44 @@ func TestDaemonAliveFlock(t *testing.T) {
 	}
 	if alive, e := daemonAlive(dir); !alive || e.PID != 12345 {
 		t.Fatalf("locked pidfile: alive=%v pid=%d (want true/12345)", alive, e.PID)
+	}
+}
+
+func TestFireHealthThreshold(t *testing.T) {
+	dir := t.TempDir()
+	h := &fireHealth{dir: dir}
+	permErr := errors.New("git worktree add: exit status 128: Operation not permitted")
+
+	// Below threshold → no warning surfaced.
+	h.record(permErr)
+	h.record(permErr)
+	if _, ok := ReadHealth(dir); ok {
+		t.Fatal("2 failures should not warn yet (threshold 3)")
+	}
+
+	// Third identical failure → warning written, EPERM detected.
+	h.record(permErr)
+	got, ok := ReadHealth(dir)
+	if !ok || got.Failures != 3 {
+		t.Fatalf("expected a warning at 3 failures; ok=%v failures=%d", ok, got.Failures)
+	}
+	if !IsPermErr(got.Error) {
+		t.Fatalf("expected EPERM to be detected in %q", got.Error)
+	}
+
+	// A different failure mode resets below threshold and clears the warning.
+	h.record(errors.New("some unrelated git error"))
+	if _, ok := ReadHealth(dir); ok {
+		t.Fatal("a new failure mode should clear the stale warning")
+	}
+
+	// A success clears everything.
+	h.record(permErr)
+	h.record(permErr)
+	h.record(permErr)
+	h.reset()
+	if _, ok := ReadHealth(dir); ok {
+		t.Fatal("a successful fire should clear the warning")
 	}
 }
 
