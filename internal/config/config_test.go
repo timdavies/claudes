@@ -57,3 +57,35 @@ func TestLoadTmuxConfFallbackWithConfigToml(t *testing.T) {
 		t.Errorf("TmuxConfig = %q, want %q", cfg.TmuxConfig, confPath)
 	}
 }
+
+// TestCostEnabled covers the daemon cost toggle: default-on, and an explicit
+// `[daemon] cost = false` overrides it (the *bool is why a false sticks).
+func TestCostEnabled(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+
+	// No config → cost defaults on.
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.CostEnabled() {
+		t.Fatal("cost should default on")
+	}
+
+	// Explicit cost = false disables it.
+	if err := os.MkdirAll(filepath.Join(dir, "claudes"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "claudes", "config.toml"),
+		[]byte("[daemon]\ncost = false\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err = Load("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.CostEnabled() {
+		t.Fatal("cost = false should disable cost stamping")
+	}
+}

@@ -352,8 +352,14 @@ func Run(cfg *config.Config) error {
 		fireDue(client, cfg, store, dir, health)
 		sweepCompletions(client, cfg, store)
 
+		// Cost stamping is cheap (one ccusage call) and Tim wants the $ figure
+		// in `claudes ls`, so it's on its own default-on gate — independent of
+		// the heavier ambient jobs (pane summaries + tab reconcile).
+		if cfg.CostEnabled() {
+			runCost(client, cfg, sessions)
+		}
 		if ambientEnabled() {
-			runAmbient(client, cfg, cache, tabReconcile, sessions)
+			runSummaries(client, cfg, cache, tabReconcile, sessions)
 			cache.save()
 		}
 
@@ -378,22 +384,16 @@ func Run(cfg *config.Config) error {
 	}
 }
 
-// ambientEnabled reports whether the daemon's legacy ambient jobs (pane
-// summaries, ccusage cost, tab reconcile) should run. Off by default.
+// ambientEnabled reports whether the daemon's heavy ambient jobs (Haiku pane
+// summaries + tab reconcile) should run. Off by default. Note: ccusage cost is
+// NOT part of this — it has its own [daemon] cost gate (default-on).
 func ambientEnabled() bool { return os.Getenv("CLAUDES_DAEMON_AMBIENT") == "1" }
 
-// runAmbient performs the legacy per-tick work: tab reconcile, session-id
-// backfill, ccusage cost stamping, and pane summaries. Preserved behind
-// CLAUDES_DAEMON_AMBIENT for debugging.
-func runAmbient(client *tmux.Client, cfg *config.Config, cache *hashCache,
-	tabReconcile func(map[string]bool), sessions []session.Session) {
-	if tabReconcile != nil {
-		live := map[string]bool{}
-		for _, s := range sessions {
-			live[s.Name] = true
-		}
-		tabReconcile(live)
-	}
+// runCost backfills each session's Claude Code UUID (needed to key ccusage) and
+// stamps its cost into @claudes-cost, which `claudes ls` shows beside the model.
+// One ccusage call covers every session. Gated by [daemon] cost (default-on),
+// independent of the ambient summary/tab jobs Tim disabled.
+func runCost(client *tmux.Client, cfg *config.Config, sessions []session.Session) {
 	ids := map[string]string{}
 	claimed := map[string]bool{}
 	for _, s := range sessions {
@@ -417,25 +417,40 @@ func runAmbient(client *tmux.Client, cfg *config.Config, cache *hashCache,
 			logf("backfill session id %s: %v", s.Name, err)
 		}
 	}
-	if len(ids) > 0 {
-		if costs, err := cost.SessionCosts(); err != nil {
-			logf("cost: %v", err)
-		} else {
-			for _, s := range sessions {
-				usd, ok := costs[ids[s.Name]]
-				if !ok {
-					continue
-				}
-				formatted := strconv.FormatFloat(usd, 'f', 2, 64)
-				if formatted == s.Cost {
-					continue
-				}
-				full := session.FullName(cfg.Prefix, s.Name)
-				if err := client.SetSessionEnv(full, "@claudes-cost", formatted); err != nil {
-					logf("set cost %s: %v", s.Name, err)
-				}
-			}
+	if len(ids) == 0 {
+		return
+	}
+	costs, err := cost.SessionCosts()
+	if err != nil {
+		logf("cost: %v", err)
+		return
+	}
+	for _, s := range sessions {
+		usd, ok := costs[ids[s.Name]]
+		if !ok {
+			continue
 		}
+		formatted := strconv.FormatFloat(usd, 'f', 2, 64)
+		if formatted == s.Cost {
+			continue
+		}
+		full := session.FullName(cfg.Prefix, s.Name)
+		if err := client.SetSessionEnv(full, "@claudes-cost", formatted); err != nil {
+			logf("set cost %s: %v", s.Name, err)
+		}
+	}
+}
+
+// runSummaries does the heavy ambient work kept behind CLAUDES_DAEMON_AMBIENT:
+// tab reconcile + Haiku pane summaries. Off by default — Tim disabled these.
+func runSummaries(client *tmux.Client, cfg *config.Config, cache *hashCache,
+	tabReconcile func(map[string]bool), sessions []session.Session) {
+	if tabReconcile != nil {
+		live := map[string]bool{}
+		for _, s := range sessions {
+			live[s.Name] = true
+		}
+		tabReconcile(live)
 	}
 	for _, s := range sessions {
 		full := session.FullName(cfg.Prefix, s.Name)

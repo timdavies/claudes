@@ -47,7 +47,11 @@ Most commands accept no name and open an interactive picker.
 
 `claudes` always passes `--model` to the spawned `claude` (default `opus`). Without this, a Haiku-running parent would silently produce Haiku sessions by inheritance. Override per-session via `--model X` or shortcuts.
 
-A background daemon hosts the scheduler. It auto-spawns when you add/enable a scheduled prompt (`claudes daemon start` to spawn manually) and self-exits once there are no live sessions, no enabled schedules, and no run in flight. Each tick (default 60s; `CLAUDES_DAEMON_TICK=10s` for dev) it fires due schedules and tears down finished runs. State files live in `~/.cache/claudes/`; force-stop with `claudes daemon stop`, inspect with `claudes daemon logs`. The old ambient jobs (pane summaries, ccusage cost, tab reconcile) are off by default — set `CLAUDES_DAEMON_AMBIENT=1` to bring them back.
+A background daemon hosts the scheduler. It auto-spawns when you add/enable a scheduled prompt (`claudes daemon start` to spawn manually) and self-exits once there are no live sessions, no enabled schedules, and no run in flight. Each tick (default 60s; `CLAUDES_DAEMON_TICK=10s` for dev) it fires due schedules and tears down finished runs. State files live in `~/.cache/claudes/`; force-stop with `claudes daemon stop`, inspect with `claudes daemon logs`.
+
+- **Liveness** is decided by the pidfile flock + heartbeat, not `kill(0)` — so `status`/`stop`/`start` stay correct even from a sandboxed shell. `stop` errors (rather than lying "stopped") if it can't signal the daemon.
+- **Don't auto-spawn it from a sandboxed Claude Code Bash call** — a daemon inherits the sandbox and every run's `git worktree add` fails with EPERM. `claudes` refuses and tells you to start it from a real shell (`! claudes daemon start`). Repeated fire failures surface as a ⚠ in `daemon status` / `claudes ls` / the TUI.
+- **Cost** (`$` per session in `claudes ls`) is stamped by the daemon and **on by default**; disable with `[daemon]\ncost = false` in `config.toml`. The heavier ambient jobs (Haiku pane summaries + tab reconcile) stay off unless `CLAUDES_DAEMON_AMBIENT=1`.
 
 ## Cost tracking
 

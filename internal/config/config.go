@@ -26,6 +26,12 @@ type Tabs struct {
 	Backend string `toml:"backend"`
 }
 
+// Daemon holds daemon-global toggles. Cost is a *bool so an explicit
+// `cost = false` overrides the default-on (a plain bool's zero value couldn't).
+type Daemon struct {
+	Cost *bool `toml:"cost"`
+}
+
 type Config struct {
 	DefaultArgs    []string           `toml:"default_args"`
 	Model          string             `toml:"model"`
@@ -38,6 +44,7 @@ type Config struct {
 	Projects       map[string]Project `toml:"projects"`
 	Hooks          Hooks              `toml:"hooks"`
 	Tabs           Tabs               `toml:"tabs"`
+	Daemon         Daemon             `toml:"daemon"`
 
 	Path string `toml:"-"`
 }
@@ -45,6 +52,13 @@ type Config struct {
 // TabBackend returns the active tab-integration backend: "iterm2" or "" (off).
 func (c *Config) TabBackend() string {
 	return c.Tabs.Backend
+}
+
+// CostEnabled reports whether the daemon should stamp per-session ccusage cost
+// (shown in `claudes ls`). Default-on; `[daemon] cost = false` disables it.
+// This is independent of CLAUDES_DAEMON_AMBIENT (pane summaries + tab reconcile).
+func (c *Config) CostEnabled() bool {
+	return c.Daemon.Cost == nil || *c.Daemon.Cost
 }
 
 // Resolved is the merged settings for a single command invocation.
@@ -197,6 +211,9 @@ func mergeOver(base, over *Config) {
 	}
 	if over.Tabs.Backend != "" {
 		base.Tabs.Backend = over.Tabs.Backend
+	}
+	if over.Daemon.Cost != nil {
+		base.Daemon.Cost = over.Daemon.Cost
 	}
 }
 
