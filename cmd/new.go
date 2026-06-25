@@ -14,7 +14,6 @@ import (
 	"golang.org/x/term"
 
 	"github.com/timdavies/claudes/internal/config"
-	"github.com/timdavies/claudes/internal/daemon"
 	"github.com/timdavies/claudes/internal/hooks"
 	"github.com/timdavies/claudes/internal/session"
 	"github.com/timdavies/claudes/internal/tmux"
@@ -199,8 +198,10 @@ func spawnSession(client *tmux.Client, cfg *config.Config, resolved config.Resol
 // default each new agent gets its own git worktree (branch + path named for the
 // session, reused across resume) so parallel agents don't fight over one
 // checkout. It falls back to dir in place — silently for non-git dirs, with a
-// one-line warning when sandboxed (git worktree add would EPERM) or when the
-// add fails — and skips entirely when the user opts out.
+// one-line warning when the add fails — and skips entirely when the user opts
+// out. We attempt the add rather than pre-checking the sandbox: a sandboxed
+// shell can still create the worktree when the path is write-allowlisted (e.g.
+// ~/Projects/grow-worktrees), and a real EPERM just degrades to in-place.
 func resolveWorktreeDir(dir, name string, optOut bool) string {
 	if optOut {
 		return dir
@@ -208,10 +209,6 @@ func resolveWorktreeDir(dir, name string, optOut bool) string {
 	repo, err := worktree.RepoRoot(dir)
 	if err != nil {
 		return dir // not a git repo — run in place
-	}
-	if daemon.Sandboxed() {
-		fmt.Fprintln(os.Stderr, "claudes: sandboxed — running in place ("+dir+") instead of a worktree")
-		return dir
 	}
 	path := worktree.StablePath(repo, name)
 	if err := worktree.Ensure(repo, name, path); err != nil {

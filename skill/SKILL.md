@@ -48,7 +48,7 @@ Most commands accept no name and open an interactive picker.
 `claudes new` (including with `--project`) defaults each agent into its **own git worktree**, so parallel agents never fight over one checkout. The worktree is named off the session: path `<repo>-worktrees/<name>`, branch `<name>` (e.g. session `CACT-3688` → `…/grow-worktrees/CACT-3688` on branch `CACT-3688`). The worktree path becomes the session's working dir, so `CLAUDES_DIR`, hooks, `ls`, `status`, and cost all reflect it.
 
 - **Opt out** with `--no-worktree` (alias `--in-place`) — runs in the checkout itself. Use this for agents that legitimately need the main repo (e.g. "test in the main checkout").
-- **Fallbacks (automatic):** a non-git dir runs in place silently; a sandboxed `claudes new` runs in place with a one-line warning (`git worktree add` would EPERM under the sandbox); an `add` failure also falls back in place with a warning. The spawn never aborts over worktree setup.
+- **Fallbacks (automatic):** a non-git dir runs in place silently; any `git worktree add` failure falls back in place with a one-line warning. The add is *attempted* even from a sandboxed shell — it succeeds wherever the path is write-allowlisted (e.g. `~/Projects/grow-worktrees`) and only degrades to in-place on a real EPERM. The spawn never aborts over worktree setup.
 - **Reuse, not recreate:** the worktree path is persisted with the pin, so `claudes start`/`resume` reuse the same worktree. It is **never** auto-torn-down on stop (it holds unpushed branches / uncommitted work) — clean up stale ones with `/git-tidy`.
 
 ## Default model + scheduler daemon
