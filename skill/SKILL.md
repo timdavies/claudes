@@ -23,7 +23,7 @@ For visual layout (windows, workspaces, panes, browsers, notifications), use the
 | Goal | Command |
 |------|---------|
 | List sessions (with descriptions) | `claudes ls` |
-| Create a session | `claudes new <name> -d <dir>` (omit name for picker; add `-- <claude-flags>` to pass through) |
+| Create a session | `claudes new <name> -d <dir>` (omit name for picker; add `-- <claude-flags>` to pass through). Defaults the agent into its own git worktree — see [Worktrees](#worktrees); `--no-worktree` (alias `--in-place`) to run in the checkout itself |
 | Attach interactively | `claudes open <name>` |
 | Write a message + Enter | `claudes write <name> "<message>"` |
 | Write raw keys (no Enter) | `claudes write --keys <name> <key>...` (e.g. `Escape`, `Up`, `C-c`, `BSpace`) |
@@ -42,6 +42,14 @@ For visual layout (windows, workspaces, panes, browsers, notifications), use the
 | Recurring scheduled prompts | `claudes tasks {add,ls,enable,disable,run,logs,rm}` (or the main TUI's schedules section) |
 
 Most commands accept no name and open an interactive picker.
+
+## Worktrees
+
+`claudes new` (including with `--project`) defaults each agent into its **own git worktree**, so parallel agents never fight over one checkout. The worktree is named off the session: path `<repo>-worktrees/<name>`, branch `<name>` (e.g. session `CACT-3688` → `…/grow-worktrees/CACT-3688` on branch `CACT-3688`). The worktree path becomes the session's working dir, so `CLAUDES_DIR`, hooks, `ls`, `status`, and cost all reflect it.
+
+- **Opt out** with `--no-worktree` (alias `--in-place`) — runs in the checkout itself. Use this for agents that legitimately need the main repo (e.g. "test in the main checkout").
+- **Fallbacks (automatic):** a non-git dir runs in place silently; a sandboxed `claudes new` runs in place with a one-line warning (`git worktree add` would EPERM under the sandbox); an `add` failure also falls back in place with a warning. The spawn never aborts over worktree setup.
+- **Reuse, not recreate:** the worktree path is persisted with the pin, so `claudes start`/`resume` reuse the same worktree. It is **never** auto-torn-down on stop (it holds unpushed branches / uncommitted work) — clean up stale ones with `/git-tidy`.
 
 ## Default model + scheduler daemon
 
