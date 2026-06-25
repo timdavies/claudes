@@ -64,6 +64,40 @@ func TestCreateTeardown(t *testing.T) {
 	}
 }
 
+func TestEnsureReuse(t *testing.T) {
+	repo, err := RepoRoot(gitInit(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := StablePath(repo, "my-agent")
+
+	if err := Ensure(repo, "my-agent", path); err != nil {
+		t.Fatalf("ensure: %v", err)
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("worktree dir missing: %v", err)
+	}
+	// Leave a file behind, then Ensure again — it must reuse the existing
+	// worktree (no error, file still there), not recreate it.
+	if err := os.WriteFile(filepath.Join(path, "work"), []byte("y"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := Ensure(repo, "my-agent", path); err != nil {
+		t.Fatalf("second ensure should reuse: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(path, "work")); err != nil {
+		t.Fatalf("ensure recreated the worktree, lost work: %v", err)
+	}
+}
+
+func TestStablePath(t *testing.T) {
+	got := StablePath("/home/u/grow", "CACT-3688")
+	want := "/home/u/grow-worktrees/CACT-3688"
+	if got != want {
+		t.Fatalf("got %q want %q", got, want)
+	}
+}
+
 func TestRepoRootNonGit(t *testing.T) {
 	if _, err := RepoRoot(t.TempDir()); err == nil {
 		t.Fatal("expected error for non-git dir")

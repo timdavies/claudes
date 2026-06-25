@@ -14,9 +14,11 @@ import (
 	"golang.org/x/term"
 
 	"github.com/timdavies/claudes/internal/config"
+	"github.com/timdavies/claudes/internal/daemon"
 	"github.com/timdavies/claudes/internal/hooks"
 	"github.com/timdavies/claudes/internal/session"
 	"github.com/timdavies/claudes/internal/tmux"
+	"github.com/timdavies/claudes/internal/worktree"
 )
 
 var (
@@ -29,6 +31,8 @@ var (
 	newHaiku   bool
 	newPin     bool
 	newGroup   string
+	newNoWT    bool
+	newInPlace bool
 )
 
 var newCmd = &cobra.Command{
@@ -92,6 +96,10 @@ var newCmd = &cobra.Command{
 				return err
 			}
 		}
+		// Default the agent into its own git worktree (branch + path named for
+		// the session), unless opted out, sandboxed, or not in a git repo.
+		resolved.Dir = resolveWorktreeDir(resolved.Dir, displayName, newNoWT || newInPlace)
+
 		full := session.FullName(cfg.Prefix, displayName)
 
 		has, err := client.Has(full)
@@ -187,6 +195,32 @@ func spawnSession(client *tmux.Client, cfg *config.Config, resolved config.Resol
 	return nil
 }
 
+// resolveWorktreeDir returns the directory the session should run in. By
+// default each new agent gets its own git worktree (branch + path named for the
+// session, reused across resume) so parallel agents don't fight over one
+// checkout. It falls back to dir in place — silently for non-git dirs, with a
+// one-line warning when sandboxed (git worktree add would EPERM) or when the
+// add fails — and skips entirely when the user opts out.
+func resolveWorktreeDir(dir, name string, optOut bool) string {
+	if optOut {
+		return dir
+	}
+	repo, err := worktree.RepoRoot(dir)
+	if err != nil {
+		return dir // not a git repo — run in place
+	}
+	if daemon.Sandboxed() {
+		fmt.Fprintln(os.Stderr, "claudes: sandboxed — running in place ("+dir+") instead of a worktree")
+		return dir
+	}
+	path := worktree.StablePath(repo, name)
+	if err := worktree.Ensure(repo, name, path); err != nil {
+		fmt.Fprintf(os.Stderr, "claudes: worktree setup failed (%v) — running in place\n", err)
+		return dir
+	}
+	return path
+}
+
 func mustJSON(v any) string {
 	b, _ := json.Marshal(v)
 	return string(b)
@@ -226,6 +260,8 @@ func init() {
 	newCmd.Flags().BoolVar(&newOpus, "opus", false, "Use opus model")
 	newCmd.Flags().BoolVar(&newPin, "pin", false, "Pin the agent — survives claude exit, resurrect with 'claudes start'")
 	newCmd.Flags().StringVar(&newGroup, "group", "", "Group the agent belongs to in 'claudes ls' (default group if empty)")
+	newCmd.Flags().BoolVar(&newNoWT, "no-worktree", false, "Run in the checkout itself instead of a per-agent git worktree")
+	newCmd.Flags().BoolVar(&newInPlace, "in-place", false, "Alias for --no-worktree")
 	rootCmd.AddCommand(newCmd)
 }
 
