@@ -230,23 +230,23 @@ func modelFromPID(pid int) string {
 	if !strings.Contains(args, "claude") {
 		return ""
 	}
+	// claude honors the LAST --model flag when several are present (e.g. a
+	// resolved --model plus a passthrough override), so keep the last match.
 	fields := strings.Fields(args)
+	model := ""
 	for i, f := range fields {
-		if f == "--model" && i+1 < len(fields) {
-			return fields[i+1]
-		}
-		if strings.HasPrefix(f, "--model=") {
-			return strings.TrimPrefix(f, "--model=")
-		}
-		if f == "--haiku" {
-			return "haiku"
-		}
-		if f == "--sonnet" {
-			return "sonnet"
-		}
-		if f == "--opus" {
-			return "opus"
+		switch {
+		case f == "--model" && i+1 < len(fields):
+			model = fields[i+1]
+		case strings.HasPrefix(f, "--model="):
+			model = strings.TrimPrefix(f, "--model=")
+		case f == "--haiku":
+			model = "haiku"
+		case f == "--sonnet":
+			model = "sonnet"
+		case f == "--opus":
+			model = "opus"
 		}
 	}
-	return ""
+	return model
 }

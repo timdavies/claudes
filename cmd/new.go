@@ -163,6 +163,14 @@ func spawnSession(client *tmux.Client, cfg *config.Config, resolved config.Resol
 	}
 	cmdline = append(cmdline, passthrough...)
 
+	// A passthrough `--model` (after `--`) overrides the resolved model that
+	// claude actually runs with, so stamp the effective one — otherwise the
+	// Model column lies for agents spawned that way.
+	stampedModel := lastModelFlag(cmdline)
+	if stampedModel == "" {
+		stampedModel = resolved.Model
+	}
+
 	// Stamp the session-level metadata. tmux passes -e KEY=VALUE on
 	// new-session into the session env, where show-environment reads it
 	// back. claudes ls uses these to populate Project/Model columns, and
@@ -171,7 +179,7 @@ func spawnSession(client *tmux.Client, cfg *config.Config, resolved config.Resol
 	extraEnv := []string{
 		"CLAUDES_NAME=" + displayName,
 		"CLAUDES_PROJECT=" + resolved.Project,
-		"CLAUDES_MODEL=" + resolved.Model,
+		"CLAUDES_MODEL=" + stampedModel,
 		"CLAUDES_GROUP=" + resolved.Group,
 		"CLAUDES_SESSION_ID=" + sessionID,
 		"CLAUDES_DIR=" + resolved.Dir,
@@ -245,6 +253,28 @@ func hasFlag(args []string, flag string) bool {
 		}
 	}
 	return false
+}
+
+// lastModelFlag returns the model claude will actually use given a cmdline,
+// mirroring claude's "last --model wins" semantics across the resolved model
+// and any passthrough override. Returns "" if no model flag is present.
+func lastModelFlag(cmdline []string) string {
+	model := ""
+	for i, a := range cmdline {
+		switch {
+		case a == "--model" && i+1 < len(cmdline):
+			model = cmdline[i+1]
+		case strings.HasPrefix(a, "--model="):
+			model = strings.TrimPrefix(a, "--model=")
+		case a == "--haiku":
+			model = "haiku"
+		case a == "--sonnet":
+			model = "sonnet"
+		case a == "--opus":
+			model = "opus"
+		}
+	}
+	return model
 }
 
 func init() {
