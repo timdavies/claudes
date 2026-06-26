@@ -263,6 +263,10 @@ func (m tuiModel) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case "left", "h":
 		m.col = 0
+	case "shift+up", "K":
+		(&m).movePinned(-1)
+	case "shift+down", "J":
+		(&m).movePinned(1)
 	case "g", "home":
 		m.cursor = 0
 		m.col = 0
@@ -301,6 +305,48 @@ func (m tuiModel) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, loadRowsCmd(m.client, m.cfg)
 	}
 	return m, nil
+}
+
+// movePinned shifts the selected pinned agent up (dir -1) or down (dir +1)
+// within the contiguous block of pinned agents in its group, persisting the
+// new order so it survives refresh ticks and restarts. No-op on the block edge
+// or for unpinned rows.
+func (m *tuiModel) movePinned(dir int) {
+	if m.cursor < 0 || m.cursor >= len(m.rows) {
+		return
+	}
+	cur := m.rows[m.cursor]
+	if !cur.Pinned {
+		m.status = "only pinned agents can be reordered"
+		return
+	}
+	target := m.cursor + dir
+	if target < 0 || target >= len(m.rows) {
+		return
+	}
+	other := m.rows[target]
+	if !other.Pinned || other.Group != cur.Group {
+		return // at the edge of this group's pinned block
+	}
+	m.rows[m.cursor], m.rows[target] = m.rows[target], m.rows[m.cursor]
+	m.cursor = target
+
+	reg, err := pinnedRegistry()
+	if err != nil || reg == nil {
+		m.status = "reorder failed: no registry"
+		return
+	}
+	var order []string
+	for _, r := range m.rows {
+		if r.Pinned {
+			order = append(order, r.Name)
+		}
+	}
+	if err := reg.Reorder(order); err != nil {
+		m.status = "reorder failed: " + err.Error()
+		return
+	}
+	m.status = "moved " + cur.Name
 }
 
 // updateConfirmKill handles the y/n prompt shown after pressing x on a row.
@@ -379,6 +425,7 @@ func togglePinCmd(client *tmux.Client, cfg *config.Config, row agentRow) tea.Cmd
 			Group:           session.NormalizeGroup(env["CLAUDES_GROUP"]),
 			DefaultArgs:     decodeJSONStrings(env["CLAUDES_DEFAULT_ARGS"]),
 			PassthroughArgs: decodeJSONStrings(env["CLAUDES_PASSTHROUGH"]),
+			Order:           reg.MaxOrder() + 1, // append to the bottom of the pinned block
 		}
 		if err := reg.Set(row.Name, entry); err != nil {
 			return pinToggledMsg{name: row.Name, err: err}
@@ -515,6 +562,9 @@ func (m tuiModel) footer() string {
 			} else {
 				hint = "↑/↓ move  →PR  enter focus  n new  p pin  x kill  r refresh  q quit"
 			}
+		}
+		if m.cursor >= 0 && m.cursor < len(m.rows) && m.rows[m.cursor].Pinned && m.col == 0 {
+			hint = "↑/↓ move  shift+↑/↓ reorder  enter focus  n new  p pin  x kill  q quit"
 		}
 	}
 	footer := cardMeta.Render(hint)

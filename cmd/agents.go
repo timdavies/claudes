@@ -38,12 +38,14 @@ func collectSessions(client *tmux.Client, cfg *config.Config) []session.Session 
 	if err != nil {
 		return nil
 	}
+	pinOrder := map[string]int{} // name -> manual sort position (0 = unset)
 	if reg, err := pinnedRegistry(); err == nil && reg != nil {
 		live := map[string]bool{}
 		for _, s := range sessions {
 			live[s.Name] = true
 		}
 		for name, e := range reg.All() {
+			pinOrder[name] = e.Order
 			if live[name] {
 				continue
 			}
@@ -65,6 +67,17 @@ func collectSessions(client *tmux.Client, cfg *config.Config) []session.Session 
 		}
 		if sessions[i].Pinned != sessions[j].Pinned {
 			return sessions[i].Pinned // pinned first
+		}
+		// Among pinned agents, honor the manual order (set via shift+↑/↓ in the
+		// TUI). Unset (0) sorts after explicit positions; ties fall back to name.
+		if sessions[i].Pinned {
+			oi, oj := pinOrder[sessions[i].Name], pinOrder[sessions[j].Name]
+			if oi != oj {
+				if oi == 0 || oj == 0 {
+					return oi == 0 // unset pins keep their place; new pins (max+1) append below
+				}
+				return oi < oj
+			}
 		}
 		return sessions[i].Name < sessions[j].Name
 	})

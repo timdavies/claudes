@@ -40,6 +40,36 @@ func TestRename(t *testing.T) {
 	}
 }
 
+func TestReorderAndMaxOrder(t *testing.T) {
+	r := NewRegistry(filepath.Join(t.TempDir(), "pinned.json"))
+	for _, name := range []string{"a", "b", "c"} {
+		_ = r.Set(name, Entry{Project: "p"})
+	}
+	if got := r.MaxOrder(); got != 0 {
+		t.Fatalf("MaxOrder before reorder = %d, want 0", got)
+	}
+	if err := r.Reorder([]string{"c", "a", "b"}); err != nil {
+		t.Fatal(err)
+	}
+	for name, want := range map[string]int{"c": 1, "a": 2, "b": 3} {
+		got, _ := r.Get(name)
+		if got.Order != want {
+			t.Fatalf("%s order = %d, want %d", name, got.Order, want)
+		}
+	}
+	if got := r.MaxOrder(); got != 3 {
+		t.Fatalf("MaxOrder after reorder = %d, want 3", got)
+	}
+	// Names not present are skipped, not errored.
+	if err := r.Reorder([]string{"b", "missing", "a", "c"}); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := r.Get("b")
+	if got.Order != 1 {
+		t.Fatalf("b order after second reorder = %d, want 1", got.Order)
+	}
+}
+
 func TestRoundTripFromDisk(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "pinned.json")
 	r := NewRegistry(path)

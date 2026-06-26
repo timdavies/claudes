@@ -25,6 +25,10 @@ type Entry struct {
 	DefaultArgs     []string `json:"default_args"`
 	PassthroughArgs []string `json:"passthrough_args"`
 	PinnedAt        string   `json:"pinned_at"`
+	// Order is the manual sort position within the pinned block (1-based).
+	// 0 means unset — those sort after ordered entries, by name. Reorder
+	// assigns sequential values; new pins get max+1 so they land at the bottom.
+	Order int `json:"order,omitempty"`
 }
 
 type Registry struct {
@@ -127,6 +131,42 @@ func (r *Registry) Rename(oldName, newName string) error {
 		agents[newName] = e
 		return true, nil
 	})
+}
+
+// Reorder assigns sequential 1-based Order values to the named entries in the
+// given order. Names not present are skipped; entries not named are left as-is
+// (their stale Order may still be > the reassigned ones, but the TUI always
+// passes the full pinned set, so in practice every pinned entry is covered).
+func (r *Registry) Reorder(orderedNames []string) error {
+	return r.WithLock(func(agents map[string]Entry) (bool, error) {
+		dirty := false
+		for i, name := range orderedNames {
+			e, ok := agents[name]
+			if !ok {
+				continue
+			}
+			if e.Order != i+1 {
+				e.Order = i + 1
+				agents[name] = e
+				dirty = true
+			}
+		}
+		return dirty, nil
+	})
+}
+
+// MaxOrder returns the highest Order currently assigned (0 if none).
+func (r *Registry) MaxOrder() int {
+	maxOrder := 0
+	_ = r.WithLock(func(agents map[string]Entry) (bool, error) {
+		for _, e := range agents {
+			if e.Order > maxOrder {
+				maxOrder = e.Order
+			}
+		}
+		return false, nil
+	})
+	return maxOrder
 }
 
 func (r *Registry) All() map[string]Entry {
