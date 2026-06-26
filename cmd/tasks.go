@@ -91,6 +91,13 @@ var tasksLogsCmd = &cobra.Command{
 	RunE:  runTaskLogs,
 }
 
+var tasksEditCmd = &cobra.Command{
+	Use:   "edit <id>",
+	Short: "Edit a scheduled prompt in place (preserves id + run history)",
+	Args:  cobra.ExactArgs(1),
+	RunE:  runTaskEdit,
+}
+
 func init() {
 	tasksAddCmd.Flags().StringVar(&taskKind, "kind", "", "interval | daily | once")
 	tasksAddCmd.Flags().StringVar(&taskEvery, "every", "", "interval cadence, e.g. 5m, 2h")
@@ -106,7 +113,21 @@ func init() {
 
 	tasksLogsCmd.Flags().StringVar(&taskRunID, "run", "", "dump this run's captured output")
 
-	tasksCmd.AddCommand(tasksAddCmd, tasksLsCmd, tasksRmCmd, tasksEnableCmd, tasksDisableCmd, tasksRunCmd, tasksLogsCmd)
+	// edit mirrors add's flag surface; only the flags actually passed are
+	// applied, so unspecified fields keep their current values. Enable/disable
+	// have their own subcommands, so there's no --disabled here.
+	tasksEditCmd.Flags().StringVar(&taskKind, "kind", "", "interval | daily | once")
+	tasksEditCmd.Flags().StringVar(&taskEvery, "every", "", "interval cadence, e.g. 5m, 2h")
+	tasksEditCmd.Flags().StringVar(&taskAt, "at", "", "daily HH:MM, or once datetime (RFC3339 / 'YYYY-MM-DD HH:MM')")
+	tasksEditCmd.Flags().StringVar(&taskName, "name", "", "task name")
+	tasksEditCmd.Flags().StringVar(&taskDir, "dir", "", "working directory (must be a git repo)")
+	tasksEditCmd.Flags().StringVar(&taskPrompt, "prompt", "", "prompt to run")
+	tasksEditCmd.Flags().StringVar(&taskModel, "model", "", "model override")
+	tasksEditCmd.Flags().StringVar(&taskPerm, "perm", "", "permission mode (default auto)")
+	tasksEditCmd.Flags().StringVar(&taskWindow, "window", "", "active hours for interval, e.g. 9-18 (empty clears)")
+	tasksEditCmd.Flags().StringVar(&taskProject, "project", "", "project name from config")
+
+	tasksCmd.AddCommand(tasksAddCmd, tasksLsCmd, tasksRmCmd, tasksEnableCmd, tasksDisableCmd, tasksRunCmd, tasksLogsCmd, tasksEditCmd)
 	rootCmd.AddCommand(tasksCmd)
 }
 
@@ -185,6 +206,97 @@ func runTaskAdd(cmd *cobra.Command, args []string) error {
 		ensureDaemonForSchedule()
 	}
 	fmt.Printf("added #%s %s — %s\n", added.ID, added.Name, schedule.Spec(added))
+	return nil
+}
+
+func runTaskEdit(cmd *cobra.Command, args []string) error {
+	store, err := scheduleStore()
+	if err != nil {
+		return err
+	}
+	sc, err := store.Get(args[0])
+	if err != nil {
+		return err
+	}
+
+	flags := cmd.Flags()
+	if flags.Changed("name") {
+		sc.Name = taskName
+	}
+	if flags.Changed("prompt") {
+		sc.Prompt = taskPrompt
+	}
+	if flags.Changed("model") {
+		sc.Model = taskModel
+	}
+	if flags.Changed("perm") {
+		sc.PermMode = taskPerm
+	}
+	if flags.Changed("project") {
+		sc.Project = taskProject
+	}
+	if flags.Changed("dir") {
+		repo, err := worktree.RepoRoot(taskDir)
+		if err != nil {
+			return fmt.Errorf("--dir must be a git repo: %w", err)
+		}
+		sc.Dir = repo
+	}
+
+	// Switching kind resets the old cadence fields so a daily->interval edit
+	// doesn't leave a stale AtClock lying around.
+	if flags.Changed("kind") {
+		sc.Kind = schedule.Kind(taskKind)
+		sc.EverySec, sc.AtClock, sc.AtTime = 0, "", ""
+	}
+	switch sc.Kind {
+	case schedule.KindInterval:
+		if flags.Changed("every") {
+			sec, err := schedule.ParseEvery(taskEvery)
+			if err != nil {
+				return err
+			}
+			sc.EverySec = sec
+		} else if flags.Changed("kind") {
+			return fmt.Errorf("--every is required when switching to interval")
+		}
+		if flags.Changed("window") {
+			if strings.TrimSpace(taskWindow) == "" {
+				sc.StartHour, sc.EndHour = 0, 0
+			} else {
+				start, end, err := parseWindow(taskWindow)
+				if err != nil {
+					return err
+				}
+				sc.StartHour, sc.EndHour = start, end
+			}
+		}
+	case schedule.KindDaily:
+		if flags.Changed("at") || flags.Changed("kind") {
+			clock, err := schedule.ParseClock(taskAt)
+			if err != nil {
+				return err
+			}
+			sc.AtClock = clock
+		}
+	case schedule.KindOnce:
+		if flags.Changed("at") || flags.Changed("kind") {
+			if strings.TrimSpace(taskAt) == "" {
+				return fmt.Errorf("--at is required for kind once")
+			}
+			sc.AtTime = taskAt
+		}
+	default:
+		return fmt.Errorf("--kind must be interval, daily, or once")
+	}
+
+	if err := store.Update(sc); err != nil {
+		return err
+	}
+	if sc.Enabled {
+		ensureDaemonForSchedule()
+	}
+	fmt.Printf("updated #%s %s — %s\n", sc.ID, sc.Name, schedule.Spec(sc))
 	return nil
 }
 
