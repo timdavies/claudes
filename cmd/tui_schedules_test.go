@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/timdavies/claudes/internal/schedule"
 	"github.com/timdavies/claudes/internal/session"
@@ -72,5 +73,27 @@ func TestScheduleSectionRenders(t *testing.T) {
 	out := m.View()
 	if !strings.Contains(out, "schedules") || !strings.Contains(out, "nightly") {
 		t.Fatalf("view should show the schedules section:\n%s", out)
+	}
+}
+
+func TestRenderSchedulesTruncationIsAnsiSafe(t *testing.T) {
+	scheds := []schedule.Schedule{
+		{ID: "1", Name: "a-really-quite-long-schedule-name", Kind: schedule.KindInterval, EverySec: 300, Enabled: true},
+		{ID: "2", Name: "short", Kind: schedule.KindInterval, EverySec: 600, Enabled: false},
+	}
+	const width = 30
+	out := renderSchedules(scheds, map[string]string{"1": "ok 2m ago"}, 0, width)
+
+	for _, line := range strings.Split(strings.TrimRight(out, "\n"), "\n") {
+		if w := lipgloss.Width(line); w > width {
+			t.Fatalf("line exceeds width %d (got %d): %q", width, w, line)
+		}
+	}
+	// The selected row (cursor 0) must carry the bright chip; an unselected one
+	// must not — this is what the old rune-truncate corrupted.
+	sel := cardSelected.Render("a-really-quite-long-schedule-name")
+	chipStart := sel[:strings.Index(sel, "a")]
+	if !strings.Contains(out, chipStart) {
+		t.Fatalf("selected schedule missing the chip styling:\n%q", out)
 	}
 }

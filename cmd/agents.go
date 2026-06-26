@@ -151,7 +151,6 @@ var (
 	cardModel      = lipgloss.NewStyle().Foreground(lipgloss.Color("13")) // magenta
 	cardPR         = lipgloss.NewStyle().Foreground(lipgloss.Color("12")) // blue
 	cardMeta       = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))  // dim
-	cardCursor     = lipgloss.NewStyle().Foreground(lipgloss.Color("14")).Bold(true)
 	cardGroup      = lipgloss.NewStyle().Foreground(lipgloss.Color("11")).Bold(true)                                 // yellow
 	cardCost       = lipgloss.NewStyle().Foreground(lipgloss.Color("10"))                                            // green
 	cardSelected   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("0")).Background(lipgloss.Color("14")) // black-on-cyan chip
@@ -255,14 +254,11 @@ func renderAgentBlocks(rows []agentRow, cursor, col, width int) []string {
 		if r.Cost != "" && r.Cost != "0.00" {
 			left += "  " + cardCost.Render("$"+r.Cost)
 		}
-		indent := ""
+		// Selection is shown by the bright name-chip and rail, not a chevron, so
+		// the indent is a constant gutter that keeps every row aligned.
 		if interactive {
-			indent = "  "
-			if selected {
-				indent = cardCursor.Render("▸") + " "
-			}
+			left = "  " + left
 		}
-		left = indent + left
 
 		// Content fills the card to the terminal width, minus the rail's
 		// border + padding (2 cols). The working dir is right-aligned on line 1

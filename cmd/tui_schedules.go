@@ -9,6 +9,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/timdavies/claudes/internal/config"
 	"github.com/timdavies/claudes/internal/daemon"
@@ -300,22 +301,26 @@ func renderSchedules(schedules []schedule.Schedule, lastRun map[string]string, c
 		if sc.Enabled {
 			dot = schedOn.Render("●")
 		}
-		gutter := "  "
+		// Selection is the bright name-chip, matching the agent list.
+		nameStyle := schedName
 		if i == cursor {
-			gutter = cardCursor.Render("▸") + " "
+			nameStyle = cardSelected
 		}
-		name := schedName.Render(sc.Name) + strings.Repeat(" ", max(0, nameW-lipgloss.Width(sc.Name)))
+		name := nameStyle.Render(sc.Name) + strings.Repeat(" ", max(0, nameW-lipgloss.Width(sc.Name)))
 		next := "—"
 		if sc.Enabled {
 			next = humanizeNext(sc, now)
 		}
-		line := fmt.Sprintf("%s%s  %s  %s  %s",
-			gutter, name, cardMeta.Render(pad(schedule.Spec(sc), 16)),
+		line := fmt.Sprintf("  %s  %s  %s  %s",
+			name, cardMeta.Render(pad(schedule.Spec(sc), 16)),
 			dot, schedNextSty.Render(pad(next, 14)))
 		if last := lastRun[sc.ID]; last != "" {
 			line += "  " + cardMeta.Render("last: "+last)
 		}
-		b.WriteString(truncate(line, width) + "\n")
+		// ansi.Truncate counts visible columns, not bytes — truncating the raw
+		// styled string (as the old rune-based truncate did) sliced through
+		// escape sequences and bled the wrong color onto the name.
+		b.WriteString(ansi.Truncate(line, width, "…") + "\n")
 	}
 	return b.String()
 }
