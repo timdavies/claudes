@@ -38,7 +38,10 @@ func collectSessions(client *tmux.Client, cfg *config.Config) []session.Session 
 	if err != nil {
 		return nil
 	}
-	pinOrder := map[string]int{} // name -> manual sort position (0 = unset)
+	// Pinned order lives in the registry (it must survive the agent dying);
+	// non-pinned order rides on each live session's @claudes-order env, already
+	// loaded into s.Order by session.List.
+	pinOrder := map[string]int{}
 	if reg, err := pinnedRegistry(); err == nil && reg != nil {
 		live := map[string]bool{}
 		for _, s := range sessions {
@@ -52,7 +55,13 @@ func collectSessions(client *tmux.Client, cfg *config.Config) []session.Session 
 			sessions = append(sessions, session.Session{
 				Name: name, Project: e.Project, Model: e.Model, Dir: e.Dir,
 				Group: e.Group, Status: session.StatusPaused, Pinned: true,
+				Order: e.Order,
 			})
+		}
+	}
+	for i := range sessions {
+		if sessions[i].Pinned {
+			sessions[i].Order = pinOrder[sessions[i].Name]
 		}
 	}
 	// Group-major ordering so `claudes ls` and the TUI render contiguous
@@ -68,16 +77,16 @@ func collectSessions(client *tmux.Client, cfg *config.Config) []session.Session 
 		if sessions[i].Pinned != sessions[j].Pinned {
 			return sessions[i].Pinned // pinned first
 		}
-		// Among pinned agents, honor the manual order (set via shift+↑/↓ in the
-		// TUI). Unset (0) sorts after explicit positions; ties fall back to name.
-		if sessions[i].Pinned {
-			oi, oj := pinOrder[sessions[i].Name], pinOrder[sessions[j].Name]
-			if oi != oj {
-				if oi == 0 || oj == 0 {
-					return oi == 0 // unset pins keep their place; new pins (max+1) append below
-				}
-				return oi < oj
+		// Within a (group, pinned-ness) block, honor the manual order set via
+		// shift+↑/↓ in the TUI. Unset (0) keeps its place at the top by name, so
+		// agents nobody has reordered look exactly as before; reordered ones get
+		// explicit positions and newly added ones append below them.
+		oi, oj := sessions[i].Order, sessions[j].Order
+		if oi != oj {
+			if oi == 0 || oj == 0 {
+				return oi == 0
 			}
+			return oi < oj
 		}
 		return sessions[i].Name < sessions[j].Name
 	})
@@ -170,6 +179,13 @@ func statusColor(s session.Status) lipgloss.Color {
 // non-interactive `ls`); col is the selected cell within the cursor row (0 =
 // the agent, 1 = its attached PR); width truncates the second line.
 func renderAgents(rows []agentRow, cursor, col, width int) string {
+	return strings.Join(renderAgentBlocks(rows, cursor, col, width), "\n") + "\n"
+}
+
+// renderAgentBlocks renders one block per row (group header + two-line card),
+// without joining them. The TUI needs the blocks separately to measure each
+// row's line span for scroll math; renderAgents just joins them for `ls`.
+func renderAgentBlocks(rows []agentRow, cursor, col, width int) []string {
 	if width <= 0 {
 		width = 80
 	}
@@ -293,7 +309,7 @@ func renderAgents(rows []agentRow, cursor, col, width int) string {
 		}
 		blocks[i] = header + rail.Render(body)
 	}
-	return strings.Join(blocks, "\n") + "\n"
+	return blocks
 }
 
 // indentLines prefixes every non-empty line of s with prefix. Empty lines are

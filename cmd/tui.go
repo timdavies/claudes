@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"time"
 
@@ -98,6 +99,7 @@ type tuiModel struct {
 	col    int // selected cell in the cursor row: 0 = agent, 1 = its PR
 	width  int
 	height int
+	scroll int    // first body line shown, for scrolling lists taller than the viewport
 	status string // transient one-liner
 
 	// Scheduled prompts occupy a second region below the agent list.
@@ -162,12 +164,14 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case rowsMsg:
 		m.rows = mergeRows(m.rows, []agentRow(msg), &m.cursor)
 		(&m).normalizeRegion()
+		(&m).ensureVisible()
 		return m, tick()
 	case schedulesMsg:
 		m.schedules = msg.schedules
 		m.schedLastRun = msg.lastRun
 		m.health = daemon.HealthWarning()
 		(&m).normalizeRegion()
+		(&m).ensureVisible()
 		return m, nil
 	case schedActionMsg:
 		if msg.err != nil {
@@ -179,6 +183,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
+		(&m).ensureVisible()
 		return m, nil
 	case killedMsg:
 		if msg.err != nil {
@@ -218,20 +223,30 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case tea.KeyMsg:
+		var (
+			md  tea.Model
+			cmd tea.Cmd
+		)
 		switch m.mode {
 		case modeConfirmKill:
-			return m.updateConfirmKill(msg)
+			md, cmd = m.updateConfirmKill(msg)
 		case modeNew:
-			return m.updateNewForm(msg)
+			md, cmd = m.updateNewForm(msg)
 		case modeScheduleLogs:
-			return m.updateScheduleLogs(msg)
+			md, cmd = m.updateScheduleLogs(msg)
 		case modeScheduleForm:
-			return m.updateScheduleForm(msg)
+			md, cmd = m.updateScheduleForm(msg)
 		case modeScheduleConfirmRm:
-			return m.updateScheduleConfirmRm(msg)
+			md, cmd = m.updateScheduleConfirmRm(msg)
 		default:
-			return m.updateList(msg)
+			md, cmd = m.updateList(msg)
 		}
+		// Keep the active row within the scroll viewport after any navigation.
+		if mm, ok := md.(tuiModel); ok {
+			(&mm).ensureVisible()
+			return mm, cmd
+		}
+		return md, cmd
 	}
 	return m, nil
 }
@@ -264,9 +279,15 @@ func (m tuiModel) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "left", "h":
 		m.col = 0
 	case "shift+up", "K":
-		(&m).movePinned(-1)
+		(&m).moveAgent(-1)
 	case "shift+down", "J":
-		(&m).movePinned(1)
+		(&m).moveAgent(1)
+	case "pgdown", "ctrl+d":
+		m.cursor = min(len(m.rows)-1, m.cursor+m.pageStep())
+		m.col = 0
+	case "pgup", "ctrl+u":
+		m.cursor = max(0, m.cursor-m.pageStep())
+		m.col = 0
 	case "g", "home":
 		m.cursor = 0
 		m.col = 0
@@ -307,34 +328,50 @@ func (m tuiModel) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// movePinned shifts the selected pinned agent up (dir -1) or down (dir +1)
-// within the contiguous block of pinned agents in its group, persisting the
-// new order so it survives refresh ticks and restarts. No-op on the block edge
-// or for unpinned rows.
-func (m *tuiModel) movePinned(dir int) {
+// moveAgent shifts the selected agent up (dir -1) or down (dir +1) within its
+// own block, persisting the new order so it survives refresh ticks. Pinned and
+// non-pinned agents reorder independently: the swap is refused at a block edge
+// or across the pinned/non-pinned boundary, so the two never interleave. Pinned
+// order lives in the registry (it must outlive the agent); non-pinned order
+// rides on each session's @claudes-order env.
+func (m *tuiModel) moveAgent(dir int) {
 	if m.cursor < 0 || m.cursor >= len(m.rows) {
 		return
 	}
 	cur := m.rows[m.cursor]
-	if !cur.Pinned {
-		m.status = "only pinned agents can be reordered"
-		return
-	}
 	target := m.cursor + dir
 	if target < 0 || target >= len(m.rows) {
 		return
 	}
 	other := m.rows[target]
-	if !other.Pinned || other.Group != cur.Group {
-		return // at the edge of this group's pinned block
+	if other.Pinned != cur.Pinned || other.Group != cur.Group {
+		return // edge of this group's pinned/non-pinned block — don't cross it
 	}
 	m.rows[m.cursor], m.rows[target] = m.rows[target], m.rows[m.cursor]
 	m.cursor = target
 
-	reg, err := pinnedRegistry()
-	if err != nil || reg == nil {
-		m.status = "reorder failed: no registry"
+	var err error
+	if cur.Pinned {
+		err = m.persistPinnedOrder()
+	} else {
+		err = m.persistUnpinnedOrder()
+	}
+	if err != nil {
+		m.status = "reorder failed: " + err.Error()
 		return
+	}
+	m.status = "moved " + cur.Name
+}
+
+// persistPinnedOrder writes the current display order of pinned rows to the
+// registry.
+func (m *tuiModel) persistPinnedOrder() error {
+	reg, err := pinnedRegistry()
+	if err != nil {
+		return err
+	}
+	if reg == nil {
+		return fmt.Errorf("no registry")
 	}
 	var order []string
 	for _, r := range m.rows {
@@ -342,11 +379,24 @@ func (m *tuiModel) movePinned(dir int) {
 			order = append(order, r.Name)
 		}
 	}
-	if err := reg.Reorder(order); err != nil {
-		m.status = "reorder failed: " + err.Error()
-		return
+	return reg.Reorder(order)
+}
+
+// persistUnpinnedOrder stamps each non-pinned session's @claudes-order with its
+// 1-based position in the current display order.
+func (m *tuiModel) persistUnpinnedOrder() error {
+	pos := 0
+	for _, r := range m.rows {
+		if r.Pinned {
+			continue
+		}
+		pos++
+		full := session.FullName(m.cfg.Prefix, r.Name)
+		if err := m.client.SetSessionEnv(full, "@claudes-order", strconv.Itoa(pos)); err != nil {
+			return err
+		}
 	}
-	m.status = "moved " + cur.Name
+	return nil
 }
 
 // updateConfirmKill handles the y/n prompt shown after pressing x on a row.
@@ -509,32 +559,16 @@ func (m tuiModel) View() string {
 		return "no sessions — press n to spawn one\n\nn new  q quit\n"
 	}
 
-	// Body: the agent list, then the schedules section. Only the active region
-	// shows a cursor; the inactive one is passed -1.
-	agentsCursor, schedCursor := -1, -1
-	if m.region == regionAgents {
-		agentsCursor = m.cursor
-	} else {
-		schedCursor = m.schedCursor
-	}
-	body := ""
-	if len(m.rows) > 0 {
-		body = renderAgents(m.rows, agentsCursor, m.col, m.width)
-	}
-	if sched := renderSchedules(m.schedules, m.schedLastRun, schedCursor, m.width); sched != "" {
-		if body != "" {
-			body += "\n"
-		}
-		body += sched
-	}
-
-	footer := m.footer()
+	// Body is rendered into a scrolling line window (bodyGeometry/renderBody)
+	// so a list taller than the terminal stays fully reachable; the footer
+	// gains a "▲/▼ more" indicator when content is hidden.
+	body, footer := m.renderBody(m.footer())
 	if m.height <= 0 {
 		return body + "\n" + footer + "\n"
 	}
 	pad := m.height - lipgloss.Height(body) - lipgloss.Height(footer)
-	if pad < 1 {
-		pad = 1
+	if pad < 0 {
+		pad = 0
 	}
 	return body + strings.Repeat("\n", pad) + footer
 }
@@ -563,7 +597,7 @@ func (m tuiModel) footer() string {
 				hint = "↑/↓ move  →PR  enter focus  n new  p pin  x kill  r refresh  q quit"
 			}
 		}
-		if m.cursor >= 0 && m.cursor < len(m.rows) && m.rows[m.cursor].Pinned && m.col == 0 {
+		if m.cursor >= 0 && m.cursor < len(m.rows) && m.col == 0 {
 			hint = "↑/↓ move  shift+↑/↓ reorder  enter focus  n new  p pin  x kill  q quit"
 		}
 	}

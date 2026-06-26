@@ -35,6 +35,7 @@ type Session struct {
 	SessionID   string // Claude Code session UUID (transcript filename stem)
 	Cost        string // estimated cost in USD, stamped by the daemon (e.g. "1.23")
 	Pinned      bool
+	Order       int // manual sort position within the (group, pinned) block; 0 = unset
 	Raw         tmux.Info
 }
 
@@ -125,6 +126,7 @@ func List(client *tmux.Client, cfg *config.Config) ([]Session, error) {
 		if env["@claudes-pinned"] == "true" {
 			s.Pinned = true
 		}
+		s.Order, _ = strconv.Atoi(env["@claudes-order"])
 		s.Group = NormalizeGroup(env["CLAUDES_GROUP"])
 		out = append(out, s)
 	}

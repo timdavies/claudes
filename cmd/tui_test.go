@@ -191,3 +191,60 @@ func TestNewFormDirAutocomplete(t *testing.T) {
 		t.Fatalf("empty input should suggest all recent dirs, got %v", f.matches)
 	}
 }
+
+func TestScrollKeepsCursorVisible(t *testing.T) {
+	m := baseModel()
+	m.width = 80
+	m.height = 12 // small viewport: cards (~3 lines) won't all fit
+	rows := make([]agentRow, 20)
+	for i := range rows {
+		rows[i] = agentRow{Name: "agent" + string(rune('a'+i)), Status: session.StatusIdle, Dir: "/tmp"}
+	}
+	m.rows = rows
+
+	// Jump to the last row; the viewport must scroll so it's on screen.
+	m, _ = send(m, key("G"))
+	lines, top, bot := m.bodyGeometry()
+	viewH := m.viewportHeight()
+	if m.scroll > top || bot >= m.scroll+viewH {
+		t.Fatalf("cursor row [%d,%d] not within window [%d,%d)", top, bot, m.scroll, m.scroll+viewH)
+	}
+	if m.scroll == 0 {
+		t.Fatalf("expected a non-zero scroll offset for the last of %d rows", len(lines))
+	}
+
+	// Back to the top resets the scroll.
+	m, _ = send(m, key("g"))
+	if m.scroll != 0 {
+		t.Fatalf("g should scroll back to top, got scroll=%d", m.scroll)
+	}
+
+	// The body window never exceeds the viewport height.
+	body, _ := m.renderBody(m.footer())
+	if got := strings.Count(body, "\n") + 1; got > viewH {
+		t.Fatalf("rendered body has %d lines, viewport is %d", got, viewH)
+	}
+}
+
+func TestReorderStaysWithinBlock(t *testing.T) {
+	m := baseModel()
+	m.client = newClient(m.cfg) // persistUnpinnedOrder needs a non-nil client
+	m.rows = []agentRow{
+		{Name: "pin1", Pinned: true, Status: session.StatusIdle},
+		{Name: "free1", Status: session.StatusIdle},
+		{Name: "free2", Status: session.StatusIdle},
+	}
+	// Cursor on the lone pinned row; shift+up/down can't move it (no pinned
+	// neighbor) and must never swap it past the non-pinned block.
+	m.cursor = 0
+	(&m).moveAgent(1)
+	if m.rows[0].Name != "pin1" {
+		t.Fatalf("pinned row crossed into the non-pinned block: %q at 0", m.rows[0].Name)
+	}
+	// Non-pinned rows reorder among themselves.
+	m.cursor = 1
+	(&m).moveAgent(1)
+	if m.rows[1].Name != "free2" || m.rows[2].Name != "free1" {
+		t.Fatalf("non-pinned reorder failed: %q,%q", m.rows[1].Name, m.rows[2].Name)
+	}
+}
