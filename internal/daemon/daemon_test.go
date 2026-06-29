@@ -3,9 +3,12 @@ package daemon
 import (
 	"errors"
 	"os"
+	"path/filepath"
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/timdavies/claudes/internal/schedule"
 )
 
 // TestDaemonAliveFlock verifies liveness is decided by the pidfile flock, not by
@@ -110,5 +113,45 @@ func TestHeartbeatFresh(t *testing.T) {
 	}
 	if heartbeatFresh(dir) {
 		t.Fatal("a 10-minute-old heartbeat should be stale")
+	}
+}
+
+func TestContainsAuthFailure(t *testing.T) {
+	fail := []string{
+		"Not logged in · Please run /login",
+		"not logged in",
+		"some preamble\nPlease run /login to continue\n",
+	}
+	for _, out := range fail {
+		if !containsAuthFailure(out) {
+			t.Errorf("expected auth failure for %q", out)
+		}
+	}
+	ok := []string{
+		"",
+		"Updated the brag doc with 3 entries.",
+		"logged in as tim",
+	}
+	for _, out := range ok {
+		if containsAuthFailure(out) {
+			t.Errorf("did not expect auth failure for %q", out)
+		}
+	}
+}
+
+func TestRunAuthFailedReadsLog(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "schedules", "9"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	logRel := filepath.Join("schedules", "9", "9-x.log")
+	if err := os.WriteFile(filepath.Join(dir, logRel), []byte("Not logged in · Please run /login\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if !runAuthFailed(dir, schedule.Run{LogFile: logRel}) {
+		t.Fatal("expected runAuthFailed=true for not-logged-in log")
+	}
+	if runAuthFailed(dir, schedule.Run{LogFile: ""}) {
+		t.Fatal("empty logfile should not report auth failure")
 	}
 }

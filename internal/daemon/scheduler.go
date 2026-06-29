@@ -255,7 +255,7 @@ func shellQuote(s string) string {
 
 // sweepCompletions finalizes runs whose session has exited, and kills+finalizes
 // runs that outran maxRunDuration (fast tick).
-func sweepCompletions(client *tmux.Client, cfg *config.Config, store *schedule.Store) {
+func sweepCompletions(client *tmux.Client, cfg *config.Config, store *schedule.Store, dir string) {
 	limit := maxRunDuration()
 	for _, r := range store.RunningRuns() {
 		full := session.FullName(cfg.Prefix, r.Session)
@@ -270,8 +270,60 @@ func sweepCompletions(client *tmux.Client, cfg *config.Config, store *schedule.S
 			}
 			continue
 		}
-		finalizeRun(store, r, schedule.RunDone)
+		finalizeExited(client, cfg, store, dir, r, schedule.RunDone)
 	}
+}
+
+// finalizeExited finalizes a run whose session has exited. A headless run that
+// couldn't authenticate exits "successfully" with only a 'Not logged in' notice
+// in its output — the model never saw the prompt, so a prompt-level guard can't
+// catch it. Detect that from the captured log and record it as RunAuthFailed
+// (not the fallback done/interrupted), then notify.
+func finalizeExited(client *tmux.Client, cfg *config.Config, store *schedule.Store, dir string, r schedule.Run, fallback schedule.RunStatus) {
+	status := fallback
+	if runAuthFailed(dir, r) {
+		status = schedule.RunAuthFailed
+		notifyAuthFailure(client, cfg, store, r)
+	}
+	finalizeRun(store, r, status)
+}
+
+// runAuthFailed reports whether a finished run's captured output carries the
+// not-authenticated signature. Cheap substring match, best-effort.
+func runAuthFailed(dir string, r schedule.Run) bool {
+	if r.LogFile == "" {
+		return false
+	}
+	b, err := os.ReadFile(filepath.Join(dir, r.LogFile))
+	if err != nil {
+		return false
+	}
+	return containsAuthFailure(string(b))
+}
+
+func containsAuthFailure(out string) bool {
+	l := strings.ToLower(out)
+	return strings.Contains(l, "not logged in") || strings.Contains(l, "please run /login")
+}
+
+// notifyAuthFailure logs the auth failure and, if a notify session is
+// configured and live, writes a one-liner to it so it lands in awareness.
+func notifyAuthFailure(client *tmux.Client, cfg *config.Config, store *schedule.Store, r schedule.Run) {
+	name := r.ScheduleID
+	if sc, err := store.Get(r.ScheduleID); err == nil && sc.Name != "" {
+		name = sc.Name
+	}
+	logf("run %s (%s): not logged in — /login needed", r.ID, name)
+
+	target := cfg.Daemon.NotifySession
+	if target == "" {
+		return
+	}
+	full := session.FullName(cfg.Prefix, target)
+	if live, _ := client.Has(full); !live {
+		return
+	}
+	_ = client.SendKeys(full, fmt.Sprintf("⚠ scheduled task %q run failed: not logged in, /login needed (run %s)", name, r.ID))
 }
 
 // finalizeRun records the run's terminal status then tears down its worktree.
@@ -298,12 +350,12 @@ func teardownRun(store *schedule.Store, r schedule.Run) {
 
 // reconcileOrphans runs at daemon startup: finalize runs whose session died
 // while the daemon was down, and retry any teardown that didn't complete.
-func reconcileOrphans(client *tmux.Client, cfg *config.Config, store *schedule.Store) {
+func reconcileOrphans(client *tmux.Client, cfg *config.Config, store *schedule.Store, dir string) {
 	for _, r := range store.RunningRuns() {
 		if live, _ := client.Has(session.FullName(cfg.Prefix, r.Session)); live {
 			continue // still going — the sweep will adopt it
 		}
-		finalizeRun(store, r, schedule.RunInterrupted)
+		finalizeExited(client, cfg, store, dir, r, schedule.RunInterrupted)
 	}
 	for _, r := range store.UnfinalizedRuns() {
 		teardownRun(store, r)

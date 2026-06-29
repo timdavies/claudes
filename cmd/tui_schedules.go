@@ -60,14 +60,18 @@ func loadSchedulesNow() ([]schedule.Schedule, map[string]string) {
 }
 
 func lastRunText(r schedule.Run) string {
+	prefix := ""
+	if r.Status == schedule.RunAuthFailed {
+		prefix = "⚠ "
+	}
 	ts := r.FinishedAt
 	if ts == "" {
 		ts = r.StartedAt
 	}
 	if t, err := time.Parse(time.RFC3339, ts); err == nil {
-		return string(r.Status) + " " + relTime(time.Since(t))
+		return prefix + string(r.Status) + " " + relTime(time.Since(t))
 	}
-	return string(r.Status)
+	return prefix + string(r.Status)
 }
 
 func relTime(d time.Duration) string {

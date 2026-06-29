@@ -323,6 +323,9 @@ func runTaskLs(cmd *cobra.Command, args []string) error {
 		last := ""
 		if runs := store.RunsFor(sc.ID); len(runs) > 0 {
 			last = "  last: " + string(runs[0].Status)
+			if runs[0].Status == schedule.RunAuthFailed {
+				last += "  ⚠ /login needed"
+			}
 		}
 		fmt.Printf("#%s  %-16s %-18s %-8s %s%s\n", sc.ID, sc.Name, schedule.Spec(sc), state, next, last)
 	}

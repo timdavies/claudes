@@ -30,6 +30,10 @@ type Tabs struct {
 // `cost = false` overrides the default-on (a plain bool's zero value couldn't).
 type Daemon struct {
 	Cost *bool `toml:"cost"`
+	// NotifySession, if set, is the agent the daemon writes scheduled-run
+	// alerts to (currently headless auth failures), via `claudes write`-style
+	// SendKeys. Empty disables notifications.
+	NotifySession string `toml:"notify_session"`
 }
 
 type Config struct {
@@ -214,6 +218,9 @@ func mergeOver(base, over *Config) {
 	}
 	if over.Daemon.Cost != nil {
 		base.Daemon.Cost = over.Daemon.Cost
+	}
+	if over.Daemon.NotifySession != "" {
+		base.Daemon.NotifySession = over.Daemon.NotifySession
 	}
 }
 

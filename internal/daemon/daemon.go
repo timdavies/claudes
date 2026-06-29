@@ -320,7 +320,7 @@ func Run(cfg *config.Config) error {
 	// (pane summaries, ccusage cost, tab reconcile) are off by default — set
 	// CLAUDES_DAEMON_AMBIENT=1 to bring them back.
 	store := schedule.NewStore(schedulesPath(dir))
-	reconcileOrphans(client, cfg, store)
+	reconcileOrphans(client, cfg, store, dir)
 	// Fresh process → no failures yet; drop any stale health from a prior run.
 	clearHealth(dir)
 	health := &fireHealth{dir: dir}
@@ -373,7 +373,7 @@ func Run(cfg *config.Config) error {
 
 		// The scheduler: fire what's due, finalize what's finished.
 		fireDue(client, cfg, store, dir, health)
-		sweepCompletions(client, cfg, store)
+		sweepCompletions(client, cfg, store, dir)
 
 		// Honor a pending stop before the (possibly slow) ccusage call, so
 		// `claudes daemon stop` doesn't wait a whole cost tick to take effect.
@@ -407,7 +407,7 @@ func Run(cfg *config.Config) error {
 			case <-mainDeadline:
 				waiting = false
 			case <-time.After(mTick):
-				sweepCompletions(client, cfg, store)
+				sweepCompletions(client, cfg, store, dir)
 				if ambientEnabled() {
 					reconcile()
 				}

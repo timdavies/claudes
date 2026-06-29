@@ -61,6 +61,7 @@ const (
 	RunDone        RunStatus = "done"        // session exited
 	RunTimedOut    RunStatus = "timeout"     // exceeded max runtime, killed
 	RunInterrupted RunStatus = "interrupted" // session gone but never finalized (daemon restart)
+	RunAuthFailed  RunStatus = "auth-failed" // headless run couldn't authenticate (/login needed)
 )
 
 // Run is one firing of a schedule.
