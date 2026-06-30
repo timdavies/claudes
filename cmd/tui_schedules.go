@@ -29,7 +29,8 @@ const (
 
 type schedulesMsg struct {
 	schedules []schedule.Schedule
-	lastRun   map[string]string // schedule id -> "done 3m ago"
+	lastRun   map[string]string  // schedule id -> "done 3m ago"
+	cost      map[string]float64 // schedule id -> cumulative USD across runs
 }
 type schedActionMsg struct {
 	status string
@@ -39,24 +40,29 @@ type schedActionMsg struct {
 // loadSchedulesCmd refreshes the schedule list off the event loop.
 func loadSchedulesCmd() tea.Cmd {
 	return func() tea.Msg {
-		scs, last := loadSchedulesNow()
-		return schedulesMsg{schedules: scs, lastRun: last}
+		scs, last, cost := loadSchedulesNow()
+		return schedulesMsg{schedules: scs, lastRun: last, cost: cost}
 	}
 }
 
-func loadSchedulesNow() ([]schedule.Schedule, map[string]string) {
+func loadSchedulesNow() ([]schedule.Schedule, map[string]string, map[string]float64) {
 	store, err := scheduleStore()
 	if err != nil {
-		return nil, nil
+		return nil, nil, nil
 	}
 	scs := store.All()
 	last := map[string]string{}
+	cost := map[string]float64{}
 	for _, sc := range scs {
-		if runs := store.RunsFor(sc.ID); len(runs) > 0 {
+		runs := store.RunsFor(sc.ID)
+		if len(runs) > 0 {
 			last[sc.ID] = lastRunText(runs[0])
 		}
+		for _, r := range runs {
+			cost[sc.ID] += r.Cost
+		}
 	}
-	return scs, last
+	return scs, last, cost
 }
 
 func lastRunText(r schedule.Run) string {
@@ -283,8 +289,10 @@ var (
 )
 
 // renderSchedules renders the bottom schedules section, one line per schedule.
-// cursor is the selected index, or -1 when the region is inactive.
-func renderSchedules(schedules []schedule.Schedule, lastRun map[string]string, cursor, width int) string {
+// cursor is the selected index, or -1 when the region is inactive. cost maps a
+// schedule id to its cumulative run cost (USD), shown as a green $ matching the
+// agent list and `tasks ls`.
+func renderSchedules(schedules []schedule.Schedule, lastRun map[string]string, cost map[string]float64, cursor, width int) string {
 	if len(schedules) == 0 {
 		return ""
 	}
@@ -319,6 +327,9 @@ func renderSchedules(schedules []schedule.Schedule, lastRun map[string]string, c
 		line := fmt.Sprintf("  %s  %s  %s  %s",
 			name, cardMeta.Render(pad(schedule.Spec(sc), 16)),
 			dot, schedNextSty.Render(pad(next, 14)))
+		if usd := cost[sc.ID]; usd > 0 {
+			line += "  " + cardCost.Render(formatUSD(usd))
+		}
 		if last := lastRun[sc.ID]; last != "" {
 			line += "  " + cardMeta.Render("last: "+last)
 		}

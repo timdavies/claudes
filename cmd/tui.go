@@ -53,7 +53,7 @@ func runTUI() error {
 
 	m := tuiModel{cfg: cfg, client: client, width: terminalWidth()}
 	m.rows = loadAgentRows(client, cfg)
-	m.schedules, m.schedLastRun = loadSchedulesNow()
+	m.schedules, m.schedLastRun, m.schedCost = loadSchedulesNow()
 	(&m).normalizeRegion()
 
 	p := tea.NewProgram(m, tea.WithAltScreen())
@@ -104,7 +104,8 @@ type tuiModel struct {
 
 	// Scheduled prompts occupy a second region below the agent list.
 	schedules    []schedule.Schedule
-	schedLastRun map[string]string // id -> last-run label
+	schedLastRun map[string]string  // id -> last-run label
+	schedCost    map[string]float64 // id -> cumulative USD across runs
 	region       tuiRegion
 	schedCursor  int
 	health       string // daemon fire-failure warning, "" when healthy
@@ -169,6 +170,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case schedulesMsg:
 		m.schedules = msg.schedules
 		m.schedLastRun = msg.lastRun
+		m.schedCost = msg.cost
 		m.health = daemon.HealthWarning()
 		(&m).normalizeRegion()
 		(&m).ensureVisible()

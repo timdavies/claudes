@@ -37,7 +37,7 @@ func (m tuiModel) bodyGeometry() (lines []string, top, bot int) {
 		bot = top + lipgloss.Height(blocks[m.cursor]) - 1
 	}
 
-	if sched := renderSchedules(m.schedules, m.schedLastRun, schedCursor, m.width); sched != "" {
+	if sched := renderSchedules(m.schedules, m.schedLastRun, m.schedCost, schedCursor, m.width); sched != "" {
 		if len(lines) > 0 {
 			lines = append(lines, "") // blank separator between the two sections
 		}

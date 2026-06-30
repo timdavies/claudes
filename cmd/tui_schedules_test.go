@@ -82,7 +82,7 @@ func TestRenderSchedulesTruncationIsAnsiSafe(t *testing.T) {
 		{ID: "2", Name: "short", Kind: schedule.KindInterval, EverySec: 600, Enabled: false},
 	}
 	const width = 30
-	out := renderSchedules(scheds, map[string]string{"1": "ok 2m ago"}, 0, width)
+	out := renderSchedules(scheds, map[string]string{"1": "ok 2m ago"}, nil, 0, width)
 
 	for _, line := range strings.Split(strings.TrimRight(out, "\n"), "\n") {
 		if w := lipgloss.Width(line); w > width {
@@ -95,5 +95,20 @@ func TestRenderSchedulesTruncationIsAnsiSafe(t *testing.T) {
 	chipStart := sel[:strings.Index(sel, "a")]
 	if !strings.Contains(out, chipStart) {
 		t.Fatalf("selected schedule missing the chip styling:\n%q", out)
+	}
+}
+
+func TestRenderSchedulesShowsCumulativeCost(t *testing.T) {
+	scheds := []schedule.Schedule{
+		{ID: "16", Name: "deprecation-watch", Kind: schedule.KindDaily, AtClock: "09:00", Enabled: true},
+		{ID: "99", Name: "never-run", Kind: schedule.KindDaily, AtClock: "09:00", Enabled: true},
+	}
+	out := renderSchedules(scheds, nil, map[string]float64{"16": 3.59}, -1, 200)
+	if !strings.Contains(out, "$3.59") {
+		t.Fatalf("expected cumulative $3.59 on the deprecation-watch row:\n%s", out)
+	}
+	// A task with no cost shows no $ (blank, not $0.00).
+	if strings.Contains(out, "$0.00") {
+		t.Fatalf("zero-cost task should not render a $ amount:\n%s", out)
 	}
 }
