@@ -112,3 +112,21 @@ func TestRenderSchedulesShowsCumulativeCost(t *testing.T) {
 		t.Fatalf("no-spend task should render $0.00 (column alignment):\n%s", out)
 	}
 }
+
+func TestSanitizeLog(t *testing.T) {
+	// A real pipe-pane capture: CRs, trailing terminal-reset escapes, sentinel.
+	raw := "Done. Summary:\r\n\r\nFixed the bug.\r\n\x1b[?1006l\x1b[?25h\x1b7\x1b[r\x1b8\x1b]0;\x07\x1b(B__CLAUDES_RUN_DONE__\r\n"
+	got := sanitizeLog(raw)
+	want := "Done. Summary:\n\nFixed the bug."
+	if got != want {
+		t.Fatalf("sanitizeLog:\n got  %q\n want %q", got, want)
+	}
+	// Clean modern output is unchanged (modulo trailing-newline trim).
+	if got := sanitizeLog("clean result text\n"); got != "clean result text" {
+		t.Fatalf("clean text mangled: %q", got)
+	}
+	// All-escape garbage collapses to empty (so loadRunLog shows the fallback).
+	if got := sanitizeLog("\x1b[?1006l\x1b[?25h\r\n"); strings.TrimSpace(got) != "" {
+		t.Fatalf("escape-only should be empty, got %q", got)
+	}
+}

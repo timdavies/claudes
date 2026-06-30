@@ -19,7 +19,6 @@ import (
 const (
 	scheduleStoreFilename = "schedules.json"
 	healthFilename        = "daemon.health"
-	runDoneSentinel       = "__CLAUDES_RUN_DONE__"
 	healthFailThreshold   = 3 // consecutive identical fire failures before warning
 )
 
@@ -220,12 +219,12 @@ func fireOne(client *tmux.Client, cfg *config.Config, store *schedule.Store, dir
 		"CLAUDES_DIR=" + wt,
 		"CLAUDES_PROMPT=" + sc.Prompt,
 		"CLAUDES_PERM=" + perm,
+		"CLAUDES_LOG=" + logAbs,
 	}
 	if err := client.NewSession(full, wt, extraEnv, buildFireCmdline(model, sessionUUID, resolved.DefaultArgs)); err != nil {
 		_ = worktree.Teardown(repo, branch, wt)
 		return err
 	}
-	_ = client.PipePaneStart(full, logAbs)
 
 	_, err = store.MarkFired(sc.ID, schedule.Run{
 		ID: runID, ScheduleID: sc.ID, Session: sessName,
@@ -254,7 +253,12 @@ func buildFireCmdline(model, sessionID string, defaultArgs []string) []string {
 	for _, a := range defaultArgs {
 		script += " " + shellQuote(a)
 	}
-	script += "; echo " + runDoneSentinel
+	// Redirect claude's output straight to the run log. Writing to a regular
+	// file (not the pane pty) means claude detects a non-TTY stdout and emits
+	// clean plain text — no terminal escapes, no CR line endings — and capture
+	// is race-free (the shell opens the file before exec'ing claude, vs
+	// pipe-pane which only sees output produced after it attaches).
+	script += ` > "$CLAUDES_LOG" 2>&1`
 	return []string{"sh", "-lc", script}
 }
 

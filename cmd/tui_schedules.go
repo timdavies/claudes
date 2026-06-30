@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -400,18 +401,87 @@ func loadRunLog(r schedule.Run) string {
 		return "(cache dir unavailable)"
 	}
 	b, err := os.ReadFile(filepath.Join(dir, r.LogFile))
-	if err != nil || len(strings.TrimSpace(string(b))) == 0 {
+	if err != nil {
 		return "(no output captured)"
 	}
-	return string(b)
+	clean := sanitizeLog(string(b))
+	if strings.TrimSpace(clean) == "" {
+		return "(no output captured)"
+	}
+	return clean
+}
+
+// ansiSeq matches terminal control sequences left over from the old pipe-pane
+// capture: CSI, OSC, charset designations, and bare escapes.
+var ansiSeq = regexp.MustCompile("\x1b\\[[0-?]*[ -/]*[@-~]" + // CSI (params 0x30-0x3F, intermediates 0x20-0x2F, final 0x40-0x7E)
+	"|\x1b\\][^\x07]*\x07" + // OSC (BEL-terminated)
+	"|\x1b[()#][0-9A-Za-z]" + // charset designation
+	"|\x1b[0-9=>NOMDEHc78]") // misc single-char escapes
+
+// sanitizeLog turns a captured run log into clean text: strips ANSI escape
+// sequences, the legacy completion sentinel, and stray control bytes (incl. the
+// CRs pty capture inserts), keeping newlines and tabs. Run logs written after
+// the stdout-redirect change are already clean; this keeps the old pipe-pane
+// logs on disk legible too.
+func sanitizeLog(s string) string {
+	s = ansiSeq.ReplaceAllString(s, "")
+	s = strings.ReplaceAll(s, "__CLAUDES_RUN_DONE__", "")
+	s = strings.Map(func(r rune) rune {
+		if r == '\n' || r == '\t' {
+			return r
+		}
+		if r < 0x20 || r == 0x7f {
+			return -1
+		}
+		return r
+	}, s)
+	return strings.TrimRight(s, "\n ")
+}
+
+// runMetaLine is the one-line status · duration · cost header for a run.
+func runMetaLine(r schedule.Run) string {
+	parts := []string{string(r.Status)}
+	if d := runDuration(r); d != "" {
+		parts = append(parts, d)
+	}
+	if r.Cost > 0 {
+		parts = append(parts, formatUSD(r.Cost))
+	}
+	return cardMeta.Render(strings.Join(parts, " · "))
+}
+
+// runDuration renders a run's elapsed time (started→finished), or "" if unknown.
+func runDuration(r schedule.Run) string {
+	if r.StartedAt == "" || r.FinishedAt == "" {
+		return ""
+	}
+	start, err1 := time.Parse(time.RFC3339, r.StartedAt)
+	end, err2 := time.Parse(time.RFC3339, r.FinishedAt)
+	if err1 != nil || err2 != nil || !end.After(start) {
+		return ""
+	}
+	d := end.Sub(start)
+	switch {
+	case d < time.Minute:
+		return fmt.Sprintf("%ds", int(d.Seconds()))
+	case d < time.Hour:
+		return fmt.Sprintf("%dm", int(d.Minutes()))
+	default:
+		return fmt.Sprintf("%dh%dm", int(d.Hours()), int(d.Minutes())%60)
+	}
 }
 
 func (v *schedLogView) view(width, height int) string {
 	var b strings.Builder
 	b.WriteString(formTitle.Render("Runs — "+v.schedule.Name) + "\n\n")
 	if v.body != "" {
+		// Header: status · cost · duration for the selected run (data off the run
+		// record — accurate without scraping the log).
+		if v.sel >= 0 && v.sel < len(v.runs) {
+			b.WriteString(runMetaLine(v.runs[v.sel]) + "\n\n")
+		}
 		lines := strings.Split(strings.TrimRight(v.body, "\n"), "\n")
-		visible := max(5, height-6)
+		visible := max(5, height-8)
 		if v.scroll > max(0, len(lines)-visible) {
 			v.scroll = max(0, len(lines)-visible)
 		}
@@ -434,11 +504,14 @@ func (v *schedLogView) view(width, height int) string {
 		if t, err := time.Parse(time.RFC3339, r.StartedAt); err == nil {
 			when = t.Local().Format("Jan 2 15:04")
 		}
-		costStr := ""
-		if r.Cost > 0 {
-			costStr = "  " + cardCost.Render(formatUSD(r.Cost))
+		meta := cardMeta.Render(when)
+		if d := runDuration(r); d != "" {
+			meta += "  " + cardMeta.Render(pad(d, 5))
 		}
-		b.WriteString(fmt.Sprintf("%s%-11s %s%s\n", marker, r.Status, cardMeta.Render(when), costStr))
+		if r.Cost > 0 {
+			meta += "  " + cardCost.Render(formatUSD(r.Cost))
+		}
+		b.WriteString(fmt.Sprintf("%s%-11s %s\n", marker, r.Status, meta))
 	}
 	b.WriteString("\n" + formGhost.Render("↑/↓ select · enter open · esc back · q close"))
 	return b.String()

@@ -421,7 +421,7 @@ func runTaskLogs(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return fmt.Errorf("no log for run %s: %w", taskRunID, err)
 		}
-		fmt.Print(string(b))
+		fmt.Println(sanitizeLog(string(b)))
 		return nil
 	}
 	runs := store.RunsFor(args[0])
@@ -430,11 +430,14 @@ func runTaskLogs(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 	for _, r := range runs {
-		costStr := ""
-		if r.Cost > 0 {
-			costStr = "  " + formatUSD(r.Cost)
+		meta := ""
+		if d := runDuration(r); d != "" {
+			meta += "  " + d
 		}
-		fmt.Printf("%s  %-11s started %s%s%s\n", r.ID, r.Status, r.StartedAt, finishedSuffix(r), costStr)
+		if r.Cost > 0 {
+			meta += "  " + formatUSD(r.Cost)
+		}
+		fmt.Printf("%s  %-11s started %s%s%s\n", r.ID, r.Status, r.StartedAt, finishedSuffix(r), meta)
 	}
 	fmt.Printf("\n`claudes tasks logs %s --run <id>` to dump output\n", args[0])
 	return nil
