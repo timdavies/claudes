@@ -38,6 +38,10 @@ type Schedule struct {
 	AtClock  string `json:"at_clock,omitempty"`  // KindDaily, "HH:MM" local
 	AtTime   string `json:"at_time,omitempty"`   // KindOnce, RFC3339
 
+	// Days restricts a KindDaily schedule to specific weekdays (0=Sun..6=Sat,
+	// time.Weekday). Empty = every day. Sorted, deduped.
+	Days []int `json:"days,omitempty"`
+
 	// Active window for KindInterval (local hours, [start,end)). Default 9–18.
 	StartHour int `json:"start_hour"`
 	EndHour   int `json:"end_hour"`

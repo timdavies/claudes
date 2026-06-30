@@ -460,6 +460,7 @@ type schedForm struct {
 	model  string
 	perm   string
 	prompt string
+	days   []int // carried through from an edited schedule (no TUI field yet)
 	focus  schedField
 	err    string
 
@@ -486,6 +487,7 @@ func newSchedForm(cfg *config.Config, edit *schedule.Schedule) *schedForm {
 		f.model = edit.Model
 		f.perm = edit.PermMode
 		f.prompt = edit.Prompt
+		f.days = edit.Days
 		switch edit.Kind {
 		case schedule.KindInterval:
 			f.spec = shortEvery(edit.EverySec)
@@ -720,6 +722,7 @@ func (f *schedForm) build() (schedule.Schedule, error) {
 			return sc, err
 		}
 		sc.AtClock = clock
+		sc.Days = f.days // preserved from the edited schedule (no TUI field yet)
 	case schedule.KindOnce:
 		if strings.TrimSpace(f.spec) == "" {
 			return sc, fmt.Errorf("datetime required")

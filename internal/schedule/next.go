@@ -2,6 +2,7 @@ package schedule
 
 import (
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -65,9 +66,41 @@ func NextFire(sc Schedule, now time.Time) (time.Time, bool) {
 		if firedToday(sc, now) {
 			cand = cand.AddDate(0, 0, 1)
 		}
+		// With a day-of-week filter, advance to the next allowed weekday (keeping
+		// AtClock). A non-allowed today is pushed forward, so it never fires —
+		// no wasted no-op runs on off days.
+		cand = advanceToAllowedDay(cand, sc.Days)
 		return cand, true
 	}
 	return time.Time{}, false
+}
+
+// advanceToAllowedDay bumps t forward by whole days until its weekday is in
+// days. Empty days means every day is allowed (no-op).
+func advanceToAllowedDay(t time.Time, days []int) time.Time {
+	if len(days) == 0 {
+		return t
+	}
+	for i := 0; i < 7; i++ {
+		if dayAllowed(t, days) {
+			return t
+		}
+		t = t.AddDate(0, 0, 1)
+	}
+	return t
+}
+
+func dayAllowed(t time.Time, days []int) bool {
+	if len(days) == 0 {
+		return true
+	}
+	wd := int(t.Weekday())
+	for _, d := range days {
+		if d == wd {
+			return true
+		}
+	}
+	return false
 }
 
 // Due reports whether sc should fire at now.
@@ -147,6 +180,59 @@ func parseClock(s string) (int, int, error) {
 	return hh, mm, nil
 }
 
+// dayNames maps a weekday int (0=Sun..6=Sat) to its short name.
+var dayNames = [7]string{"sun", "mon", "tue", "wed", "thu", "fri", "sat"}
+
+// ParseDays turns "mon" or "mon,thu" (also full names / 3-letter, any case)
+// into sorted, deduped weekday ints (0=Sun..6=Sat). Empty input → nil (every
+// day).
+func ParseDays(s string) ([]int, error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return nil, nil
+	}
+	seen := map[int]bool{}
+	var out []int
+	for _, tok := range strings.Split(s, ",") {
+		name := strings.ToLower(strings.TrimSpace(tok))
+		if name == "" {
+			continue
+		}
+		if len(name) > 3 {
+			name = name[:3]
+		}
+		wd := -1
+		for i, n := range dayNames {
+			if n == name {
+				wd = i
+				break
+			}
+		}
+		if wd < 0 {
+			return nil, fmt.Errorf("invalid day %q (use mon,tue,wed,thu,fri,sat,sun)", tok)
+		}
+		if !seen[wd] {
+			seen[wd] = true
+			out = append(out, wd)
+		}
+	}
+	sort.Ints(out)
+	return out, nil
+}
+
+// FormatDays renders weekday ints back to "mon,thu" in week order.
+func FormatDays(days []int) string {
+	sorted := append([]int(nil), days...)
+	sort.Ints(sorted)
+	names := make([]string, 0, len(sorted))
+	for _, d := range sorted {
+		if d >= 0 && d < 7 {
+			names = append(names, dayNames[d])
+		}
+	}
+	return strings.Join(names, ",")
+}
+
 // ParseEvery turns "5m"/"30s"/"2h" into seconds.
 func ParseEvery(s string) (int, error) {
 	d, err := time.ParseDuration(strings.TrimSpace(s))
@@ -179,6 +265,9 @@ func Spec(sc Schedule) string {
 		}
 		return "every " + shortDur(d) + w
 	case KindDaily:
+		if len(sc.Days) > 0 {
+			return FormatDays(sc.Days) + " " + sc.AtClock
+		}
 		return "daily " + sc.AtClock
 	case KindOnce:
 		if t, err := parseOnce(sc.AtTime); err == nil {

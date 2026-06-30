@@ -103,3 +103,65 @@ func TestParseEvery(t *testing.T) {
 		t.Fatal("expected error for bad interval")
 	}
 }
+
+func TestParseDays(t *testing.T) {
+	cases := map[string][]int{
+		"":            nil,
+		"mon":         {1},
+		"mon,thu":     {1, 4},
+		"thu,mon":     {1, 4}, // sorted
+		"Mon, Monday": {1},    // case-insensitive, 3-letter fold, deduped
+		"sun,sat":     {0, 6},
+	}
+	for in, want := range cases {
+		got, err := ParseDays(in)
+		if err != nil {
+			t.Fatalf("ParseDays(%q) error: %v", in, err)
+		}
+		if len(got) != len(want) {
+			t.Fatalf("ParseDays(%q) = %v, want %v", in, got, want)
+		}
+		for i := range want {
+			if got[i] != want[i] {
+				t.Fatalf("ParseDays(%q) = %v, want %v", in, got, want)
+			}
+		}
+	}
+	if _, err := ParseDays("funday"); err == nil {
+		t.Fatal("expected error for invalid day")
+	}
+}
+
+func TestSpecDailyWithDays(t *testing.T) {
+	weekly := Schedule{Kind: KindDaily, AtClock: "09:00", Days: []int{1}}
+	if got := Spec(weekly); got != "mon 09:00" {
+		t.Fatalf("Spec weekly = %q, want 'mon 09:00'", got)
+	}
+	plain := Schedule{Kind: KindDaily, AtClock: "09:00"}
+	if got := Spec(plain); got != "daily 09:00" {
+		t.Fatalf("Spec plain daily = %q, want 'daily 09:00'", got)
+	}
+}
+
+func TestDailyDaysOnlyFiresOnAllowedDay(t *testing.T) {
+	// A Monday-only daily at 09:00.
+	sc := Schedule{Kind: KindDaily, AtClock: "09:00", Days: []int{1}, Enabled: true}
+
+	mon := time.Date(2026, 6, 29, 9, 0, 0, 0, time.Local) // 2026-06-29 is a Monday
+	if mon.Weekday() != time.Monday {
+		t.Fatalf("test fixture wrong: %v is not Monday", mon)
+	}
+	if !Due(sc, mon) {
+		t.Fatal("Monday-only daily should be Due on Monday at 09:00")
+	}
+
+	tue := time.Date(2026, 6, 30, 9, 0, 0, 0, time.Local) // Tuesday
+	if Due(sc, tue) {
+		t.Fatal("Monday-only daily must NOT be Due on Tuesday (no wasted fire)")
+	}
+	// Next fire from Tuesday lands on the following Monday at 09:00.
+	next, ok := NextFire(sc, tue)
+	if !ok || next.Weekday() != time.Monday || next.Hour() != 9 {
+		t.Fatalf("next fire from Tuesday = %v (ok=%v), want next Monday 09:00", next, ok)
+	}
+}

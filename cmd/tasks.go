@@ -28,6 +28,7 @@ var (
 	taskProject string
 	taskDisable bool
 	taskRunID   string
+	taskDays    string
 )
 
 var tasksCmd = &cobra.Command{
@@ -102,6 +103,7 @@ func init() {
 	tasksAddCmd.Flags().StringVar(&taskKind, "kind", "", "interval | daily | once")
 	tasksAddCmd.Flags().StringVar(&taskEvery, "every", "", "interval cadence, e.g. 5m, 2h")
 	tasksAddCmd.Flags().StringVar(&taskAt, "at", "", "daily HH:MM, or once datetime (RFC3339 / 'YYYY-MM-DD HH:MM')")
+	tasksAddCmd.Flags().StringVar(&taskDays, "days", "", "restrict daily to weekdays, e.g. mon or mon,thu")
 	tasksAddCmd.Flags().StringVar(&taskName, "name", "", "task name")
 	tasksAddCmd.Flags().StringVar(&taskDir, "dir", "", "working directory (must be a git repo); default cwd")
 	tasksAddCmd.Flags().StringVar(&taskPrompt, "prompt", "", "prompt to run")
@@ -119,6 +121,7 @@ func init() {
 	tasksEditCmd.Flags().StringVar(&taskKind, "kind", "", "interval | daily | once")
 	tasksEditCmd.Flags().StringVar(&taskEvery, "every", "", "interval cadence, e.g. 5m, 2h")
 	tasksEditCmd.Flags().StringVar(&taskAt, "at", "", "daily HH:MM, or once datetime (RFC3339 / 'YYYY-MM-DD HH:MM')")
+	tasksEditCmd.Flags().StringVar(&taskDays, "days", "", "restrict daily to weekdays, e.g. mon or mon,thu (empty clears)")
 	tasksEditCmd.Flags().StringVar(&taskName, "name", "", "task name")
 	tasksEditCmd.Flags().StringVar(&taskDir, "dir", "", "working directory (must be a git repo)")
 	tasksEditCmd.Flags().StringVar(&taskPrompt, "prompt", "", "prompt to run")
@@ -183,6 +186,11 @@ func runTaskAdd(cmd *cobra.Command, args []string) error {
 			return err
 		}
 		sc.AtClock = clock
+		days, err := schedule.ParseDays(taskDays)
+		if err != nil {
+			return err
+		}
+		sc.Days = days
 	case schedule.KindOnce:
 		if strings.TrimSpace(taskAt) == "" {
 			return fmt.Errorf("--at is required for kind once")
@@ -247,7 +255,7 @@ func runTaskEdit(cmd *cobra.Command, args []string) error {
 	// doesn't leave a stale AtClock lying around.
 	if flags.Changed("kind") {
 		sc.Kind = schedule.Kind(taskKind)
-		sc.EverySec, sc.AtClock, sc.AtTime = 0, "", ""
+		sc.EverySec, sc.AtClock, sc.AtTime, sc.Days = 0, "", "", nil
 	}
 	switch sc.Kind {
 	case schedule.KindInterval:
@@ -278,6 +286,13 @@ func runTaskEdit(cmd *cobra.Command, args []string) error {
 				return err
 			}
 			sc.AtClock = clock
+		}
+		if flags.Changed("days") {
+			days, err := schedule.ParseDays(taskDays)
+			if err != nil {
+				return err
+			}
+			sc.Days = days // empty clears back to every day
 		}
 	case schedule.KindOnce:
 		if flags.Changed("at") || flags.Changed("kind") {

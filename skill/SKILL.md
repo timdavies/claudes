@@ -126,6 +126,8 @@ claudes status --clear                                  # hand control back to t
 ```
 claudes tasks add --kind interval --every 5m  --name lint    --dir <repo> --prompt "..."   # every 5m, 9–18 window
 claudes tasks add --kind daily    --at 09:00   --name standup --dir <repo> --prompt "..."   # daily at 09:00
+claudes tasks add --kind daily    --at 09:00 --days mon       --name weekly --dir <repo> --prompt "..."  # Mondays only
+claudes tasks add --kind daily    --at 09:00 --days mon,thu   --name twiceweek --dir <repo> --prompt "..." # Mon + Thu
 claudes tasks add --kind once     --at "2026-06-20 14:00" --name oneoff --dir <repo> --prompt "..."
 claudes tasks ls                       # id, name, cadence, enabled, next-fire, last-run status
 claudes tasks enable 3 / disable 3     # toggle
@@ -134,7 +136,8 @@ claudes tasks logs 3                   # run history; `--run <id>` dumps one run
 claudes tasks rm 3                     # delete schedule + its run history
 ```
 
-- **Kinds**: `interval` (`--every 5m`), `daily` (`--at HH:MM`), `once` (`--at <datetime>`). `interval`/`daily` only fire inside the active window (default 9–18, override `--window 9-18`); `once` ignores the window and auto-disables after firing.
+- **Kinds**: `interval` (`--every 5m`), `daily` (`--at HH:MM`), `once` (`--at <datetime>`). `interval` only fires inside the active window (default 9–18, override `--window 9-18`); `once` ignores the window and auto-disables after firing.
+- **Day-of-week**: add `--days mon` (or `--days mon,thu`) to a `daily` task to fire only on those weekdays — a real weekly cadence (no wasted no-op fires on off days, and `ls`/TUI show the true cadence, e.g. `mon 09:00`). Works on `tasks add` and `tasks edit` (empty `--days` on edit clears back to every day). Day names: `mon tue wed thu fri sat sun`.
 - **Permissions**: runs use `claude -p --permission-mode auto` so they don't hang on prompts (override with `--perm`). Needs Claude Code ≥2.1.83 and Opus 4.6+/Sonnet 4.6+.
 - **Overlap**: if a schedule's previous run is still live, the next fire is skipped.
 - **`--dir` must be a git repo** (the worktree hangs off its HEAD). Fully editable from the main TUI's bottom **schedules** section — `enter` opens a schedule's run logs; mutating actions need **shift** so a stray keystroke can't fire one: `N`/`E`/`X`/`T`/`R` add/edit/delete/toggle/run-now.
