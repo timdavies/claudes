@@ -5,6 +5,7 @@ package worktree
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -42,10 +43,12 @@ func StablePath(repoRoot, name string) string {
 // Ensure makes path a usable worktree on branch, reusing whatever already
 // exists so it's safe to call on every spawn (including resume). If path is
 // already a registered worktree it's a no-op; if branch already exists the
-// worktree checks it out rather than creating a fresh one.
-func Ensure(repoRoot, branch, path string) error {
+// worktree checks it out rather than creating a fresh one. The returned bool is
+// true only when this call created the worktree (false on reuse), so callers can
+// run one-time setup (e.g. copying personal-context files) just once.
+func Ensure(repoRoot, branch, path string) (created bool, err error) {
 	if isWorktree(repoRoot, path) {
-		return nil
+		return false, nil
 	}
 	args := []string{"-C", repoRoot, "worktree", "add"}
 	if branchExists(repoRoot, branch) {
@@ -55,9 +58,65 @@ func Ensure(repoRoot, branch, path string) error {
 	}
 	if out, err := exec.Command("git", args...).CombinedOutput(); err != nil {
 		_ = exec.Command("git", "-C", repoRoot, "worktree", "prune").Run()
-		return fmt.Errorf("git worktree add: %w: %s", err, strings.TrimSpace(string(out)))
+		return false, fmt.Errorf("git worktree add: %w: %s", err, strings.TrimSpace(string(out)))
 	}
-	return nil
+	return true, nil
+}
+
+// CopyInto copies each relative path from srcRoot into dstRoot at the same
+// relative location. Missing sources are skipped silently; parent dirs are
+// created as needed. Best-effort: it returns the first error encountered but
+// callers treat copy failures as non-fatal (the worktree is still usable). Used
+// to carry untracked/gitignored personal context (CLAUDE.local.md, .env) that
+// `git worktree add` doesn't bring along.
+func CopyInto(srcRoot, dstRoot string, rels []string) error {
+	var firstErr error
+	for _, rel := range rels {
+		rel = strings.TrimSpace(rel)
+		if rel == "" {
+			continue
+		}
+		src := filepath.Join(srcRoot, rel)
+		info, err := os.Lstat(src)
+		if err != nil {
+			continue // missing source — skip silently
+		}
+		dst := filepath.Join(dstRoot, rel)
+		if err := copyPath(src, dst, info); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
+}
+
+func copyPath(src, dst string, info os.FileInfo) error {
+	if info.IsDir() {
+		entries, err := os.ReadDir(src)
+		if err != nil {
+			return err
+		}
+		if err := os.MkdirAll(dst, 0o755); err != nil {
+			return err
+		}
+		for _, e := range entries {
+			ci, err := e.Info()
+			if err != nil {
+				return err
+			}
+			if err := copyPath(filepath.Join(src, e.Name()), filepath.Join(dst, e.Name()), ci); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		return err
+	}
+	in, err := os.ReadFile(src)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(dst, in, info.Mode().Perm())
 }
 
 // isWorktree reports whether path is already a registered worktree of the repo.

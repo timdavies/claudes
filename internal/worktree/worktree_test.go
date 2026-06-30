@@ -71,8 +71,12 @@ func TestEnsureReuse(t *testing.T) {
 	}
 	path := StablePath(repo, "my-agent")
 
-	if err := Ensure(repo, "my-agent", path); err != nil {
+	created, err := Ensure(repo, "my-agent", path)
+	if err != nil {
 		t.Fatalf("ensure: %v", err)
+	}
+	if !created {
+		t.Fatal("first Ensure should report created=true")
 	}
 	if _, err := os.Stat(path); err != nil {
 		t.Fatalf("worktree dir missing: %v", err)
@@ -82,8 +86,12 @@ func TestEnsureReuse(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(path, "work"), []byte("y"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := Ensure(repo, "my-agent", path); err != nil {
+	created, err = Ensure(repo, "my-agent", path)
+	if err != nil {
 		t.Fatalf("second ensure should reuse: %v", err)
+	}
+	if created {
+		t.Fatal("second Ensure should report created=false (reuse)")
 	}
 	if _, err := os.Stat(filepath.Join(path, "work")); err != nil {
 		t.Fatalf("ensure recreated the worktree, lost work: %v", err)
@@ -109,5 +117,32 @@ func TestSiblingPath(t *testing.T) {
 	want := "/home/u/grow-worktrees/fix-flakes-20260617-120000"
 	if got != want {
 		t.Fatalf("got %q want %q", got, want)
+	}
+}
+
+func TestCopyInto(t *testing.T) {
+	src := t.TempDir()
+	dst := t.TempDir()
+	// A top-level file, a nested file, and a listed-but-missing path.
+	if err := os.WriteFile(filepath.Join(src, "CLAUDE.local.md"), []byte("ctx"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(src, "config"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(src, "config", "local.env"), []byte("K=V"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := CopyInto(src, dst, []string{"CLAUDE.local.md", "config/local.env", "missing.txt"}); err != nil {
+		t.Fatalf("CopyInto: %v", err)
+	}
+	if b, err := os.ReadFile(filepath.Join(dst, "CLAUDE.local.md")); err != nil || string(b) != "ctx" {
+		t.Fatalf("top-level copy: %q err=%v", b, err)
+	}
+	if b, err := os.ReadFile(filepath.Join(dst, "config", "local.env")); err != nil || string(b) != "K=V" {
+		t.Fatalf("nested copy (parent dir made?): %q err=%v", b, err)
+	}
+	if _, err := os.Stat(filepath.Join(dst, "missing.txt")); !os.IsNotExist(err) {
+		t.Fatal("missing source should be skipped, not created")
 	}
 }

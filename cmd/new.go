@@ -97,7 +97,7 @@ var newCmd = &cobra.Command{
 		}
 		// Default the agent into its own git worktree (branch + path named for
 		// the session), unless opted out, sandboxed, or not in a git repo.
-		resolved.Dir = resolveWorktreeDir(resolved.Dir, displayName, newNoWT || newInPlace)
+		resolved.Dir = resolveWorktreeDir(resolved.Dir, displayName, newNoWT || newInPlace, resolved.WorktreeCopy)
 
 		full := session.FullName(cfg.Prefix, displayName)
 
@@ -210,7 +210,7 @@ func spawnSession(client *tmux.Client, cfg *config.Config, resolved config.Resol
 // out. We attempt the add rather than pre-checking the sandbox: a sandboxed
 // shell can still create the worktree when the path is write-allowlisted (e.g.
 // ~/Projects/grow-worktrees), and a real EPERM just degrades to in-place.
-func resolveWorktreeDir(dir, name string, optOut bool) string {
+func resolveWorktreeDir(dir, name string, optOut bool, copyPaths []string) string {
 	if optOut {
 		return dir
 	}
@@ -219,9 +219,18 @@ func resolveWorktreeDir(dir, name string, optOut bool) string {
 		return dir // not a git repo — run in place
 	}
 	path := worktree.StablePath(repo, name)
-	if err := worktree.Ensure(repo, name, path); err != nil {
+	created, err := worktree.Ensure(repo, name, path)
+	if err != nil {
 		fmt.Fprintf(os.Stderr, "claudes: worktree setup failed (%v) — running in place\n", err)
 		return dir
+	}
+	// Carry over per-project personal-context files (CLAUDE.local.md, .env, …)
+	// that git worktree add doesn't bring. Only on creation; copy failures are
+	// non-fatal — the worktree is still usable.
+	if created && len(copyPaths) > 0 {
+		if err := worktree.CopyInto(repo, path, copyPaths); err != nil {
+			fmt.Fprintf(os.Stderr, "claudes: worktree_copy partial (%v)\n", err)
+		}
 	}
 	return path
 }

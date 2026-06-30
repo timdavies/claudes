@@ -50,6 +50,13 @@ Most commands accept no name and open an interactive picker.
 - **Opt out** with `--no-worktree` (alias `--in-place`) — runs in the checkout itself. Use this for agents that legitimately need the main repo (e.g. "test in the main checkout").
 - **Fallbacks (automatic):** a non-git dir runs in place silently; any `git worktree add` failure falls back in place with a one-line warning. The add is *attempted* even from a sandboxed shell — it succeeds wherever the path is write-allowlisted (e.g. `~/Projects/grow-worktrees`) and only degrades to in-place on a real EPERM. The spawn never aborts over worktree setup.
 - **Reuse, not recreate:** the worktree path is persisted with the pin, so `claudes start`/`resume` reuse the same worktree. It is **never** auto-torn-down on stop (it holds unpushed branches / uncommitted work) — clean up stale ones with `/git-tidy`.
+- **Copy personal context in:** `git worktree add` only brings *tracked* files, so untracked/gitignored per-repo context (`CLAUDE.local.md`, `.env`, …) is missing in a fresh worktree. Declare paths to carry over per project with `worktree_copy` (paths relative to the project dir):
+  ```toml
+  [projects.grow]
+  dir = "/Users/timdavies/Projects/grow"
+  worktree_copy = ["CLAUDE.local.md", ".env"]
+  ```
+  On worktree **creation** (not reuse) claudes copies each into the same relative path, making parent dirs as needed; missing sources are skipped silently and a copy failure never aborts the spawn. Settable on new projects via `claudes project add --worktree-copy <path>` (repeatable).
 
 ## Default model + scheduler daemon
 

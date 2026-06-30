@@ -35,9 +35,10 @@ var projectShowCmd = &cobra.Command{
 }
 
 var (
-	projectAddDir         string
-	projectAddModel       string
-	projectAddDefaultArgs []string
+	projectAddDir          string
+	projectAddModel        string
+	projectAddDefaultArgs  []string
+	projectAddWorktreeCopy []string
 )
 
 var projectAddCmd = &cobra.Command{
@@ -59,6 +60,7 @@ func init() {
 	projectAddCmd.Flags().StringVarP(&projectAddDir, "dir", "d", "", "Working directory (required)")
 	projectAddCmd.Flags().StringVar(&projectAddModel, "model", "", "Override default model for this project")
 	projectAddCmd.Flags().StringArrayVar(&projectAddDefaultArgs, "default-arg", nil, "Default arg passed to claude (repeatable)")
+	projectAddCmd.Flags().StringArrayVar(&projectAddWorktreeCopy, "worktree-copy", nil, "Path (relative to dir) copied into each new worktree, e.g. CLAUDE.local.md (repeatable)")
 	_ = projectAddCmd.MarkFlagRequired("dir")
 
 	projectCmd.AddCommand(projectListCmd)
@@ -117,9 +119,10 @@ func runProjectAdd(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("project %q already exists; remove it first or edit %s", name, cfg.Path)
 	}
 	p := config.Project{
-		Dir:         projectAddDir,
-		Model:       projectAddModel,
-		DefaultArgs: projectAddDefaultArgs,
+		Dir:          projectAddDir,
+		Model:        projectAddModel,
+		DefaultArgs:  projectAddDefaultArgs,
+		WorktreeCopy: projectAddWorktreeCopy,
 	}
 	if cfg.Projects == nil {
 		cfg.Projects = map[string]config.Project{}

@@ -19,6 +19,11 @@ type Project struct {
 	Model       string   `toml:"model"`
 	DefaultArgs []string `toml:"default_args"`
 	Hooks       Hooks    `toml:"hooks"`
+	// WorktreeCopy lists paths (relative to the project dir) that claudes copies
+	// from the main checkout into each new worktree it creates for this project —
+	// for untracked/gitignored personal context that `git worktree add` skips,
+	// e.g. CLAUDE.local.md or .env.
+	WorktreeCopy []string `toml:"worktree_copy"`
 }
 
 // Tabs selects the terminal-tab integration backend: "iterm2" or "" (off).
@@ -70,9 +75,10 @@ type Resolved struct {
 	Project     string // empty if none
 	Dir         string
 	Model       string
-	Group       string // agent group; "" means the default group
-	DefaultArgs []string
-	Hooks       Hooks
+	Group        string // agent group; "" means the default group
+	DefaultArgs  []string
+	WorktreeCopy []string // paths copied from the main checkout into a new worktree
+	Hooks        Hooks
 	// from global
 	StopTimeout int
 	Prefix      string
@@ -272,6 +278,9 @@ func (c *Config) Resolve(explicitDir, projectFlag, cwd string) (Resolved, error)
 		}
 		if len(p.DefaultArgs) > 0 {
 			r.DefaultArgs = append([]string(nil), p.DefaultArgs...) // replace, not append
+		}
+		if len(p.WorktreeCopy) > 0 {
+			r.WorktreeCopy = append([]string(nil), p.WorktreeCopy...)
 		}
 		// Project hooks REPLACE global hooks (not merge).
 		if p.Hooks.PostNew != "" || p.Hooks.PostStop != "" {
