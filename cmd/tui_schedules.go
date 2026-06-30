@@ -327,9 +327,8 @@ func renderSchedules(schedules []schedule.Schedule, lastRun map[string]string, c
 		line := fmt.Sprintf("  %s  %s  %s  %s",
 			name, cardMeta.Render(pad(schedule.Spec(sc), 16)),
 			dot, schedNextSty.Render(pad(next, 14)))
-		if usd := cost[sc.ID]; usd > 0 {
-			line += "  " + cardCost.Render(formatUSD(usd))
-		}
+		// Always show a $ amount ($0.00 when no spend) so the column aligns.
+		line += "  " + cardCost.Render(formatUSD(cost[sc.ID]))
 		if last := lastRun[sc.ID]; last != "" {
 			line += "  " + cardMeta.Render("last: "+last)
 		}

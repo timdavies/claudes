@@ -107,8 +107,8 @@ func TestRenderSchedulesShowsCumulativeCost(t *testing.T) {
 	if !strings.Contains(out, "$3.59") {
 		t.Fatalf("expected cumulative $3.59 on the deprecation-watch row:\n%s", out)
 	}
-	// A task with no cost shows no $ (blank, not $0.00).
-	if strings.Contains(out, "$0.00") {
-		t.Fatalf("zero-cost task should not render a $ amount:\n%s", out)
+	// Every row shows a $ amount for column alignment — a no-spend task is $0.00.
+	if !strings.Contains(out, "$0.00") {
+		t.Fatalf("no-spend task should render $0.00 (column alignment):\n%s", out)
 	}
 }

@@ -347,10 +347,8 @@ func runTaskLs(cmd *cobra.Command, args []string) error {
 		for _, r := range runs {
 			total += r.Cost
 		}
-		costStr := ""
-		if total > 0 {
-			costStr = "  " + formatUSD(total)
-		}
+		// Always show a $ amount ($0.00 when no spend) so the column aligns.
+		costStr := "  " + formatUSD(total)
 		fmt.Printf("#%s  %-16s %-18s %-8s %s%s%s\n", sc.ID, sc.Name, schedule.Spec(sc), state, next, costStr, last)
 	}
 	return nil
