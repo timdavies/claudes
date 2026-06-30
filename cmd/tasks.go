@@ -321,13 +321,22 @@ func runTaskLs(cmd *cobra.Command, args []string) error {
 			next = humanizeNext(sc, now)
 		}
 		last := ""
-		if runs := store.RunsFor(sc.ID); len(runs) > 0 {
+		total := 0.0
+		runs := store.RunsFor(sc.ID)
+		if len(runs) > 0 {
 			last = "  last: " + string(runs[0].Status)
 			if runs[0].Status == schedule.RunAuthFailed {
 				last += "  ⚠ /login needed"
 			}
 		}
-		fmt.Printf("#%s  %-16s %-18s %-8s %s%s\n", sc.ID, sc.Name, schedule.Spec(sc), state, next, last)
+		for _, r := range runs {
+			total += r.Cost
+		}
+		costStr := ""
+		if total > 0 {
+			costStr = "  " + formatUSD(total)
+		}
+		fmt.Printf("#%s  %-16s %-18s %-8s %s%s%s\n", sc.ID, sc.Name, schedule.Spec(sc), state, next, costStr, last)
 	}
 	return nil
 }
@@ -408,7 +417,11 @@ func runTaskLogs(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 	for _, r := range runs {
-		fmt.Printf("%s  %-11s started %s%s\n", r.ID, r.Status, r.StartedAt, finishedSuffix(r))
+		costStr := ""
+		if r.Cost > 0 {
+			costStr = "  " + formatUSD(r.Cost)
+		}
+		fmt.Printf("%s  %-11s started %s%s%s\n", r.ID, r.Status, r.StartedAt, finishedSuffix(r), costStr)
 	}
 	fmt.Printf("\n`claudes tasks logs %s --run <id>` to dump output\n", args[0])
 	return nil
@@ -419,6 +432,11 @@ func finishedSuffix(r schedule.Run) string {
 		return ""
 	}
 	return "  finished " + r.FinishedAt
+}
+
+// formatUSD renders a cost like live-agent cost: a bare "$1.23".
+func formatUSD(usd float64) string {
+	return "$" + strconv.FormatFloat(usd, 'f', 2, 64)
 }
 
 // parseWindow parses "9-18" into start/end hours.

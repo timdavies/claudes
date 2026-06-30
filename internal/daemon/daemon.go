@@ -388,7 +388,12 @@ func Run(cfg *config.Config) error {
 		// in `claudes ls`, so it's on its own default-on gate — independent of
 		// the heavier ambient jobs (pane summaries + tab reconcile).
 		if cfg.CostEnabled() {
-			runCost(client, cfg, sessions)
+			if costs, err := cost.SessionCosts(); err != nil {
+				logf("cost: %v", err)
+			} else {
+				runCost(client, cfg, sessions, costs)
+				stampRunCosts(store, costs)
+			}
 		}
 		if ambientEnabled() {
 			runSummaries(client, cfg, cache, tabReconcile, sessions)
@@ -425,7 +430,7 @@ func ambientEnabled() bool { return os.Getenv("CLAUDES_DAEMON_AMBIENT") == "1" }
 // stamps its cost into @claudes-cost, which `claudes ls` shows beside the model.
 // One ccusage call covers every session. Gated by [daemon] cost (default-on),
 // independent of the ambient summary/tab jobs Tim disabled.
-func runCost(client *tmux.Client, cfg *config.Config, sessions []session.Session) {
+func runCost(client *tmux.Client, cfg *config.Config, sessions []session.Session, costs map[string]float64) {
 	ids := map[string]string{}
 	claimed := map[string]bool{}
 	for _, s := range sessions {
@@ -452,11 +457,6 @@ func runCost(client *tmux.Client, cfg *config.Config, sessions []session.Session
 	if len(ids) == 0 {
 		return
 	}
-	costs, err := cost.SessionCosts()
-	if err != nil {
-		logf("cost: %v", err)
-		return
-	}
 	for _, s := range sessions {
 		usd, ok := costs[ids[s.Name]]
 		if !ok {
@@ -469,6 +469,27 @@ func runCost(client *tmux.Client, cfg *config.Config, sessions []session.Session
 		full := session.FullName(cfg.Prefix, s.Name)
 		if err := client.SetSessionEnv(full, "@claudes-cost", formatted); err != nil {
 			logf("set cost %s: %v", s.Name, err)
+		}
+	}
+}
+
+// stampRunCosts records each scheduled run's ccusage cost (keyed by the
+// session id stamped at fire) onto the run. Re-stamps until the value settles,
+// so a run that finished just before ccusage processed its transcript gets its
+// cost on a later tick. The transcript outlives the torn-down worktree, so cost
+// stays resolvable after the run completes.
+func stampRunCosts(store *schedule.Store, costs map[string]float64) {
+	for _, r := range store.AllRuns() {
+		if r.SessionUUID == "" {
+			continue
+		}
+		usd, ok := costs[r.SessionUUID]
+		if !ok || usd == r.Cost {
+			continue
+		}
+		r.Cost = usd
+		if err := store.UpdateRun(r); err != nil {
+			logf("set run cost %s: %v", r.ID, err)
 		}
 	}
 }

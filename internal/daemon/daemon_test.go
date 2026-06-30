@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -153,5 +154,40 @@ func TestRunAuthFailedReadsLog(t *testing.T) {
 	}
 	if runAuthFailed(dir, schedule.Run{LogFile: ""}) {
 		t.Fatal("empty logfile should not report auth failure")
+	}
+}
+
+func TestBuildFireCmdlineIncludesSessionID(t *testing.T) {
+	cmdline := buildFireCmdline("opus", "abc-123", nil)
+	if len(cmdline) != 3 || cmdline[0] != "sh" {
+		t.Fatalf("unexpected cmdline shape: %v", cmdline)
+	}
+	if !strings.Contains(cmdline[2], "--session-id 'abc-123'") {
+		t.Fatalf("script missing --session-id: %q", cmdline[2])
+	}
+	// No session id -> no flag (defensive: empty uuid shouldn't emit a bare flag).
+	if got := buildFireCmdline("", "", nil)[2]; strings.Contains(got, "--session-id") {
+		t.Fatalf("empty session id should not emit the flag: %q", got)
+	}
+}
+
+func TestStampRunCosts(t *testing.T) {
+	store := schedule.NewStore(filepath.Join(t.TempDir(), "schedules.json"))
+	if _, err := store.Add(schedule.Schedule{Name: "t", Kind: schedule.KindInterval, EverySec: 300, Dir: "/x"}); err != nil {
+		t.Fatal(err)
+	}
+	sc := store.All()[0]
+	if _, err := store.MarkFired(sc.ID, schedule.Run{ID: "r1", ScheduleID: sc.ID, SessionUUID: "uuid-1"}); err != nil {
+		t.Fatal(err)
+	}
+
+	stampRunCosts(store, map[string]float64{"uuid-1": 0.42})
+	if got := store.RunsFor(sc.ID)[0].Cost; got != 0.42 {
+		t.Fatalf("run cost not stamped: got %v want 0.42", got)
+	}
+	// A run with no matching ccusage entry is left untouched.
+	stampRunCosts(store, map[string]float64{"other": 9.99})
+	if got := store.RunsFor(sc.ID)[0].Cost; got != 0.42 {
+		t.Fatalf("run cost should be unchanged: got %v", got)
 	}
 }

@@ -424,7 +424,11 @@ func (v *schedLogView) view(width, height int) string {
 		if t, err := time.Parse(time.RFC3339, r.StartedAt); err == nil {
 			when = t.Local().Format("Jan 2 15:04")
 		}
-		b.WriteString(fmt.Sprintf("%s%-11s %s\n", marker, r.Status, cardMeta.Render(when)))
+		costStr := ""
+		if r.Cost > 0 {
+			costStr = "  " + cardCost.Render(formatUSD(r.Cost))
+		}
+		b.WriteString(fmt.Sprintf("%s%-11s %s%s\n", marker, r.Status, cardMeta.Render(when), costStr))
 	}
 	b.WriteString("\n" + formGhost.Render("↑/↓ select · enter open · esc back · q close"))
 	return b.String()

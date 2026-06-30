@@ -77,6 +77,10 @@ type Run struct {
 	StartedAt  string    `json:"started_at"`
 	FinishedAt string    `json:"finished_at,omitempty"`
 	TornDown   bool      `json:"torn_down"`
+	// SessionUUID is the Claude Code session id passed to `claude --session-id`
+	// at fire, used to key the run's ccusage cost (same scheme as live agents).
+	SessionUUID string  `json:"session_uuid,omitempty"`
+	Cost        float64 `json:"cost,omitempty"` // estimated USD, stamped by the daemon
 }
 
 var (
@@ -297,6 +301,16 @@ func (s *Store) RunsFor(scheduleID string) []Run {
 		return false, nil
 	})
 	sort.SliceStable(out, func(i, j int) bool { return out[i].StartedAt > out[j].StartedAt })
+	return out
+}
+
+// AllRuns returns a copy of every run across all schedules.
+func (s *Store) AllRuns() []Run {
+	var out []Run
+	_ = s.withLock(func(sf *storeFile) (bool, error) {
+		out = append(out, sf.Runs...)
+		return false, nil
+	})
 	return out
 }
 

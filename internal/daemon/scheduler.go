@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -204,6 +205,10 @@ func fireOne(client *tmux.Client, cfg *config.Config, store *schedule.Store, dir
 		perm = "auto"
 	}
 
+	// Stamp a known Claude Code session id so the run's ccusage cost is
+	// matchable later (same scheme as live agents' CLAUDES_SESSION_ID).
+	sessionUUID := uuidV4()
+
 	sessName := "sched-" + runID
 	full := session.FullName(cfg.Prefix, sessName)
 	extraEnv := []string{
@@ -216,7 +221,7 @@ func fireOne(client *tmux.Client, cfg *config.Config, store *schedule.Store, dir
 		"CLAUDES_PROMPT=" + sc.Prompt,
 		"CLAUDES_PERM=" + perm,
 	}
-	if err := client.NewSession(full, wt, extraEnv, buildFireCmdline(model, resolved.DefaultArgs)); err != nil {
+	if err := client.NewSession(full, wt, extraEnv, buildFireCmdline(model, sessionUUID, resolved.DefaultArgs)); err != nil {
 		_ = worktree.Teardown(repo, branch, wt)
 		return err
 	}
@@ -225,6 +230,7 @@ func fireOne(client *tmux.Client, cfg *config.Config, store *schedule.Store, dir
 	_, err = store.MarkFired(sc.ID, schedule.Run{
 		ID: runID, ScheduleID: sc.ID, Session: sessName,
 		Repo: repo, Branch: branch, Worktree: wt, LogFile: logRel,
+		SessionUUID: sessionUUID,
 	})
 	if err != nil {
 		return err
@@ -237,8 +243,11 @@ func fireOne(client *tmux.Client, cfg *config.Config, store *schedule.Store, dir
 // session env (no argv quoting), and a trailing sentinel marks completion in
 // the logfile. The prompt and permission mode arrive via CLAUDES_PROMPT/
 // CLAUDES_PERM; model and default_args are trusted config and are shell-quoted.
-func buildFireCmdline(model string, defaultArgs []string) []string {
+func buildFireCmdline(model, sessionID string, defaultArgs []string) []string {
 	script := `claude -p "$CLAUDES_PROMPT" --permission-mode "$CLAUDES_PERM"`
+	if sessionID != "" {
+		script += " --session-id " + shellQuote(sessionID)
+	}
 	if model != "" {
 		script += " --model " + shellQuote(model)
 	}
@@ -251,6 +260,16 @@ func buildFireCmdline(model string, defaultArgs []string) []string {
 
 func shellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+func uuidV4() string {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return ""
+	}
+	b[6] = (b[6] & 0x0f) | 0x40 // version 4
+	b[8] = (b[8] & 0x3f) | 0x80 // variant 10
+	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
 }
 
 // sweepCompletions finalizes runs whose session has exited, and kills+finalizes
