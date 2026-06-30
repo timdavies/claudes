@@ -39,7 +39,7 @@ For visual layout (windows, workspaces, panes, browsers, notifications), use the
 | Manage projects | `claudes project {list,add,rm,show}` |
 | Read/write top-level config | `claudes config {show,get,set}` |
 | Manage the daemon | `claudes daemon {status,start,stop,logs}` |
-| Recurring scheduled prompts | `claudes tasks {add,ls,enable,disable,run,logs,rm}` (or the main TUI's schedules section) |
+| Recurring scheduled prompts | `claudes tasks {add,ls,edit,enable,disable,run,logs,rm}` (or the main TUI's schedules section) |
 
 Most commands accept no name and open an interactive picker.
 
@@ -137,7 +137,7 @@ claudes tasks rm 3                     # delete schedule + its run history
 - **Kinds**: `interval` (`--every 5m`), `daily` (`--at HH:MM`), `once` (`--at <datetime>`). `interval`/`daily` only fire inside the active window (default 9–18, override `--window 9-18`); `once` ignores the window and auto-disables after firing.
 - **Permissions**: runs use `claude -p --permission-mode auto` so they don't hang on prompts (override with `--perm`). Needs Claude Code ≥2.1.83 and Opus 4.6+/Sonnet 4.6+.
 - **Overlap**: if a schedule's previous run is still live, the next fire is skipped.
-- **`--dir` must be a git repo** (the worktree hangs off its HEAD). Fully editable from the main TUI's bottom **schedules** section — `enter` opens a schedule's run logs; `n`/`e`/`x`/`space`/`R` add/edit/delete/toggle/run-now.
+- **`--dir` must be a git repo** (the worktree hangs off its HEAD). Fully editable from the main TUI's bottom **schedules** section — `enter` opens a schedule's run logs; mutating actions need **shift** so a stray keystroke can't fire one: `N`/`E`/`X`/`T`/`R` add/edit/delete/toggle/run-now.
 
 ## Agent groups
 

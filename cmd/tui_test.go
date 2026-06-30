@@ -31,9 +31,9 @@ func baseModel() tuiModel {
 func TestConfirmKillRequiresConfirmation(t *testing.T) {
 	m := baseModel()
 
-	m, _ = send(m, key("x"))
+	m, _ = send(m, key("X"))
 	if m.mode != modeConfirmKill {
-		t.Fatalf("x should enter confirm-kill mode, got %v", m.mode)
+		t.Fatalf("X should enter confirm-kill mode, got %v", m.mode)
 	}
 	if m.confirmRow.Name != "alpha" {
 		t.Fatalf("confirm row should be the cursor row, got %q", m.confirmRow.Name)
@@ -48,8 +48,8 @@ func TestConfirmKillRequiresConfirmation(t *testing.T) {
 		t.Fatalf("cancel should not dispatch a kill command")
 	}
 
-	// x then y confirms and dispatches a kill.
-	m, _ = send(m, key("x"))
+	// X then y confirms and dispatches a kill.
+	m, _ = send(m, key("X"))
 	m, cmd = send(m, key("y"))
 	if m.mode != modeList {
 		t.Fatalf("y should return to the list, got %v", m.mode)
@@ -63,12 +63,12 @@ func TestPausedPinnedAgentRefusesKill(t *testing.T) {
 	m := baseModel()
 	m.rows = []agentRow{{Name: "alpha", Status: session.StatusPaused, Pinned: true, Dir: "/tmp/alpha"}}
 
-	m, cmd := send(m, key("x"))
+	m, cmd := send(m, key("X"))
 	if m.mode != modeList {
-		t.Fatalf("x on a paused pinned agent should stay on the list, got %v", m.mode)
+		t.Fatalf("X on a paused pinned agent should stay on the list, got %v", m.mode)
 	}
 	if cmd != nil {
-		t.Fatalf("x on a paused pinned agent should not dispatch a command")
+		t.Fatalf("X on a paused pinned agent should not dispatch a command")
 	}
 	if m.status != "can't kill a pinned agent" {
 		t.Fatalf("expected refusal message, got %q", m.status)
@@ -80,9 +80,9 @@ func TestConfirmPromptSaysPauseForPinnedRunning(t *testing.T) {
 	m.rows = []agentRow{{Name: "alpha", Status: session.StatusRunning, Pinned: true, Dir: "/tmp/alpha"}}
 	m.width, m.height = 80, 24
 
-	m, _ = send(m, key("x"))
+	m, _ = send(m, key("X"))
 	if m.mode != modeConfirmKill {
-		t.Fatalf("x on a running pinned agent should confirm, got %v", m.mode)
+		t.Fatalf("X on a running pinned agent should confirm, got %v", m.mode)
 	}
 	if v := m.View(); !strings.Contains(v, "pause alpha?") {
 		t.Errorf("confirm prompt for a pinned agent should say pause, got:\n%s", v)
@@ -101,9 +101,9 @@ func TestConfirmPromptSaysPauseForPinnedRunning(t *testing.T) {
 func TestNewKeyOpensFormAndEscCancels(t *testing.T) {
 	m := baseModel()
 
-	m, _ = send(m, key("n"))
+	m, _ = send(m, key("N"))
 	if m.mode != modeNew || m.form == nil {
-		t.Fatalf("n should open the new-agent form")
+		t.Fatalf("N should open the new-agent form")
 	}
 
 	m, _ = send(m, special(tea.KeyEsc))
@@ -114,7 +114,7 @@ func TestNewKeyOpensFormAndEscCancels(t *testing.T) {
 
 func TestNewFormEditingAndSubmitValidation(t *testing.T) {
 	m := baseModel()
-	m, _ = send(m, key("n"))
+	m, _ = send(m, key("N"))
 
 	// Clear the suggested name, then type a new one.
 	for range m.form.name {
@@ -153,17 +153,17 @@ func TestViewRendersEachMode(t *testing.T) {
 	m := baseModel()
 	m.width, m.height = 80, 24
 
-	if !strings.Contains(m.View(), "n new") {
-		t.Errorf("list footer should advertise the n/x keys")
+	if !strings.Contains(m.View(), "N new") {
+		t.Errorf("list footer should advertise the N/X keys")
 	}
 
-	m, _ = send(m, key("x"))
+	m, _ = send(m, key("X"))
 	if !strings.Contains(m.View(), "kill alpha?") {
 		t.Errorf("confirm-kill view should prompt for confirmation")
 	}
 
 	m, _ = send(m, key("n")) // n is treated as 'no' in confirm mode -> back to list
-	m, _ = send(m, key("n")) // now open the form
+	m, _ = send(m, key("N")) // now open the form
 	if v := m.View(); !strings.Contains(v, "New agent") || !strings.Contains(v, "Directory") {
 		t.Errorf("new-agent form should render its fields, got:\n%s", v)
 	}

@@ -298,11 +298,13 @@ func (m tuiModel) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case "enter":
 		return m.activate()
-	case "x":
+	// Mutating actions require shift (uppercase) so a stray bare keystroke into
+	// the TUI can't fire anything destructive. Navigation/refresh stay bare.
+	case "X":
 		if m.cursor >= 0 && m.cursor < len(m.rows) {
 			row := m.rows[m.cursor]
 			// Pinning is the delete guard: a paused pinned agent is already
-			// stopped, so there's nothing to pause and x won't unpin it.
+			// stopped, so there's nothing to pause and X won't unpin it.
 			if row.Pinned && row.Status == session.StatusPaused {
 				m.status = "can't kill a pinned agent"
 				return m, nil
@@ -311,13 +313,13 @@ func (m tuiModel) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.mode = modeConfirmKill
 			m.status = ""
 		}
-	case "p":
+	case "P":
 		if m.cursor >= 0 && m.cursor < len(m.rows) {
 			row := m.rows[m.cursor]
 			m.status = ""
 			return m, togglePinCmd(m.client, m.cfg, row)
 		}
-	case "n":
+	case "N":
 		m.form = newNewForm(m.cfg, m.rows)
 		m.mode = modeNew
 		m.status = ""
@@ -556,7 +558,7 @@ func (m tuiModel) View() string {
 		}
 	}
 	if len(m.rows) == 0 && len(m.schedules) == 0 {
-		return "no sessions — press n to spawn one\n\nn new  q quit\n"
+		return "no sessions — press N to spawn one\n\nN new  q quit\n"
 	}
 
 	// Body is rendered into a scrolling line window (bodyGeometry/renderBody)
@@ -587,18 +589,18 @@ func (m tuiModel) footer() string {
 	}
 	var hint string
 	if m.region == regionSchedules {
-		hint = "↑/↓ move  enter logs  n new  e edit  space on/off  R run  x delete  q quit"
+		hint = "↑/↓ move  enter logs  N new  E edit  T on/off  R run  X delete  r refresh  q quit"
 	} else {
-		hint = "↑/↓ move  enter focus  n new  p pin  x kill  r refresh  q quit"
+		hint = "↑/↓ move  enter focus  N new  P pin  X kill  r refresh  q quit"
 		if m.cursor >= 0 && m.cursor < len(m.rows) && m.rows[m.cursor].PR != "" {
 			if m.col == 1 {
-				hint = "←/→ select  enter open PR  ↑/↓ move  n new  p pin  x kill  q quit"
+				hint = "←/→ select  enter open PR  ↑/↓ move  N new  P pin  X kill  q quit"
 			} else {
-				hint = "↑/↓ move  →PR  enter focus  n new  p pin  x kill  r refresh  q quit"
+				hint = "↑/↓ move  →PR  enter focus  N new  P pin  X kill  r refresh  q quit"
 			}
 		}
 		if m.cursor >= 0 && m.cursor < len(m.rows) && m.col == 0 {
-			hint = "↑/↓ move  shift+↑/↓ reorder  enter focus  n new  p pin  x kill  q quit"
+			hint = "↑/↓ move  shift+↑/↓ reorder  enter focus  N new  P pin  X kill  q quit"
 		}
 	}
 	footer := cardMeta.Render(hint)

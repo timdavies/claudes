@@ -113,9 +113,6 @@ func (m tuiModel) currentSchedule() (schedule.Schedule, bool) {
 
 // updateScheduleList handles keys while the cursor is in the schedules region.
 func (m tuiModel) updateScheduleList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	if msg.Type == tea.KeySpace {
-		return m.toggleSchedule()
-	}
 	switch msg.String() {
 	case "q", "esc", "ctrl+c":
 		return m, tea.Quit
@@ -137,22 +134,26 @@ func (m tuiModel) updateScheduleList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.schedCursor = max(0, len(m.schedules)-1)
 	case "enter":
 		return m.openScheduleLogs()
-	case "n":
+	// Mutating actions require shift (uppercase) so a stray bare keystroke can't
+	// add/edit/delete/run/toggle a schedule by accident.
+	case "N":
 		m.schedForm = newSchedForm(m.cfg, nil)
 		m.mode = modeScheduleForm
 		m.status = ""
-	case "e":
+	case "E":
 		if sc, ok := m.currentSchedule(); ok {
 			m.schedForm = newSchedForm(m.cfg, &sc)
 			m.mode = modeScheduleForm
 			m.status = ""
 		}
-	case "x":
+	case "X":
 		if sc, ok := m.currentSchedule(); ok {
 			m.schedToRm = sc
 			m.mode = modeScheduleConfirmRm
 			m.status = ""
 		}
+	case "T":
+		return m.toggleSchedule()
 	case "R":
 		if sc, ok := m.currentSchedule(); ok {
 			m.status = "firing " + sc.Name + "…"

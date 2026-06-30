@@ -42,10 +42,10 @@ func TestRegionNavigation(t *testing.T) {
 func TestScheduleKeysGatedByRegion(t *testing.T) {
 	m := schedModel()
 	m.region = regionSchedules
-	// `n` in the schedules region opens the schedule form, not the agent form.
-	m, _ = send(m, key("n"))
+	// `N` in the schedules region opens the schedule form, not the agent form.
+	m, _ = send(m, key("N"))
 	if m.mode != modeScheduleForm || m.schedForm == nil {
-		t.Fatalf("n should open schedule form; mode=%d", m.mode)
+		t.Fatalf("N should open schedule form; mode=%d", m.mode)
 	}
 	// esc returns to the list.
 	m, _ = send(m, special(tea.KeyEsc))
@@ -57,9 +57,9 @@ func TestScheduleKeysGatedByRegion(t *testing.T) {
 func TestScheduleDeleteConfirm(t *testing.T) {
 	m := schedModel()
 	m.region = regionSchedules
-	m, _ = send(m, key("x"))
+	m, _ = send(m, key("X"))
 	if m.mode != modeScheduleConfirmRm || m.schedToRm.ID != "1" {
-		t.Fatalf("x should arm delete confirm; mode=%d", m.mode)
+		t.Fatalf("X should arm delete confirm; mode=%d", m.mode)
 	}
 	m, _ = send(m, key("n"))
 	if m.mode != modeList {
