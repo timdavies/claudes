@@ -450,6 +450,20 @@ func runMetaLine(r schedule.Run) string {
 	return cardMeta.Render(strings.Join(parts, " · "))
 }
 
+// wrapLines splits body into physical rows, soft-wrapping any logical line
+// wider than width (word-aware, hard-breaking over-long tokens) so nothing is
+// truncated. A non-positive width falls back to 80.
+func wrapLines(body string, width int) []string {
+	if width <= 0 {
+		width = 80
+	}
+	var out []string
+	for _, ln := range strings.Split(strings.TrimRight(body, "\n"), "\n") {
+		out = append(out, strings.Split(ansi.Wrap(ln, width, ""), "\n")...)
+	}
+	return out
+}
+
 // runDuration renders a run's elapsed time (started→finished), or "" if unknown.
 func runDuration(r schedule.Run) string {
 	if r.StartedAt == "" || r.FinishedAt == "" {
@@ -480,7 +494,10 @@ func (v *schedLogView) view(width, height int) string {
 		if v.sel >= 0 && v.sel < len(v.runs) {
 			b.WriteString(runMetaLine(v.runs[v.sel]) + "\n\n")
 		}
-		lines := strings.Split(strings.TrimRight(v.body, "\n"), "\n")
+		// Soft-wrap each logical line to the viewport width so long lines flow
+		// onto multiple rows instead of being truncated by the alt-screen
+		// renderer. Scroll then operates on the wrapped (physical) rows.
+		lines := wrapLines(v.body, width)
 		visible := max(5, height-8)
 		if v.scroll > max(0, len(lines)-visible) {
 			v.scroll = max(0, len(lines)-visible)

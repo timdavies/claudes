@@ -130,3 +130,22 @@ func TestSanitizeLog(t *testing.T) {
 		t.Fatalf("escape-only should be empty, got %q", got)
 	}
 }
+
+func TestWrapLines(t *testing.T) {
+	body := "short\n" + strings.Repeat("x", 250) + "\nalso short"
+	lines := wrapLines(body, 80)
+	// The 250-char line must be split into multiple <=80-wide rows, nothing lost.
+	for _, ln := range lines {
+		if lipgloss.Width(ln) > 80 {
+			t.Fatalf("wrapped line exceeds 80 cols (%d): %q", lipgloss.Width(ln), ln)
+		}
+	}
+	joined := strings.ReplaceAll(strings.Join(lines, ""), " ", "")
+	if !strings.Contains(joined, strings.Repeat("x", 250)) {
+		t.Fatalf("wrapping dropped content; got:\n%v", lines)
+	}
+	// Short lines pass through as single rows.
+	if lines[0] != "short" || lines[len(lines)-1] != "also short" {
+		t.Fatalf("short lines mangled: %q ... %q", lines[0], lines[len(lines)-1])
+	}
+}
