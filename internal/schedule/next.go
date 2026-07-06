@@ -52,7 +52,11 @@ func NextFire(sc Schedule, now time.Time) (time.Time, bool) {
 		if next.Before(now) {
 			next = now
 		}
-		return snapIntoWindow(next, sc.StartHour, sc.EndHour), true
+		next = snapIntoWindow(next, sc.StartHour, sc.EndHour)
+		// Honor a day-of-week restriction: skip forward to the next allowed
+		// weekday (keeping the in-window time) so off days never fire.
+		next = advanceToAllowedDay(next, sc.Days)
+		return next, true
 
 	case KindDaily:
 		hh, mm, err := parseClock(sc.AtClock)
@@ -112,9 +116,13 @@ func Due(sc Schedule, now time.Time) bool {
 	if next.After(now) {
 		return false
 	}
-	// Interval respects the active window; once/daily fire at their explicit time.
-	if sc.Kind == KindInterval && !inWindow(now, sc.StartHour, sc.EndHour) {
-		return false
+	// Interval respects the active window AND any day-of-week restriction;
+	// once/daily fire at their explicit time (daily's day filter is enforced
+	// via NextFire). dayAllowed is true when Days is empty.
+	if sc.Kind == KindInterval {
+		if !inWindow(now, sc.StartHour, sc.EndHour) || !dayAllowed(now, sc.Days) {
+			return false
+		}
 	}
 	return true
 }
@@ -220,7 +228,8 @@ func ParseDays(s string) ([]int, error) {
 	return out, nil
 }
 
-// FormatDays renders weekday ints back to "mon,thu" in week order.
+// FormatDays renders weekday ints back to a compact label in week order:
+// "weekdays" for Mon–Fri, "weekends" for Sat+Sun, else "mon,thu".
 func FormatDays(days []int) string {
 	sorted := append([]int(nil), days...)
 	sort.Ints(sorted)
@@ -229,6 +238,12 @@ func FormatDays(days []int) string {
 		if d >= 0 && d < 7 {
 			names = append(names, dayNames[d])
 		}
+	}
+	switch strings.Join(names, ",") {
+	case "mon,tue,wed,thu,fri":
+		return "weekdays"
+	case "sun,sat":
+		return "weekends"
 	}
 	return strings.Join(names, ",")
 }
@@ -263,7 +278,11 @@ func Spec(sc Schedule) string {
 		if sc.StartHour != sc.EndHour {
 			w = fmt.Sprintf(" · %d–%d", sc.StartHour, sc.EndHour)
 		}
-		return "every " + shortDur(d) + w
+		days := ""
+		if len(sc.Days) > 0 {
+			days = " · " + FormatDays(sc.Days)
+		}
+		return "every " + shortDur(d) + w + days
 	case KindDaily:
 		if len(sc.Days) > 0 {
 			return FormatDays(sc.Days) + " " + sc.AtClock

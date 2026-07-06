@@ -180,6 +180,11 @@ func runTaskAdd(cmd *cobra.Command, args []string) error {
 			}
 			sc.StartHour, sc.EndHour = start, end
 		}
+		days, err := schedule.ParseDays(taskDays)
+		if err != nil {
+			return err
+		}
+		sc.Days = days
 	case schedule.KindDaily:
 		clock, err := schedule.ParseClock(taskAt)
 		if err != nil {
@@ -278,6 +283,13 @@ func runTaskEdit(cmd *cobra.Command, args []string) error {
 				}
 				sc.StartHour, sc.EndHour = start, end
 			}
+		}
+		if flags.Changed("days") {
+			days, err := schedule.ParseDays(taskDays)
+			if err != nil {
+				return err
+			}
+			sc.Days = days // empty clears back to every day
 		}
 	case schedule.KindDaily:
 		if flags.Changed("at") || flags.Changed("kind") {

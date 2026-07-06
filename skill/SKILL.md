@@ -144,7 +144,7 @@ claudes tasks rm 3                     # delete schedule + its run history
 ```
 
 - **Kinds**: `interval` (`--every 5m`), `daily` (`--at HH:MM`), `once` (`--at <datetime>`). `interval` only fires inside the active window (default 9–18, override `--window 9-18`); `once` ignores the window and auto-disables after firing.
-- **Day-of-week**: add `--days mon` (or `--days mon,thu`) to a `daily` task to fire only on those weekdays — a real weekly cadence (no wasted no-op fires on off days, and `ls`/TUI show the true cadence, e.g. `mon 09:00`). Works on `tasks add` and `tasks edit` (empty `--days` on edit clears back to every day). Day names: `mon tue wed thu fri sat sun`.
+- **Day-of-week**: add `--days mon` (or `--days mon,thu`) to restrict which weekdays a task fires. Works on both `daily` **and** `interval` kinds: a daily task fires only on those days (e.g. `mon 09:00`); an interval task fires only on those days *within* its hour window (e.g. `every 15m · 7–19 · weekdays`) — off days are skipped entirely, no wasted fires. Works on `tasks add` and `tasks edit` (empty `--days` on edit clears back to every day). Day names: `mon tue wed thu fri sat sun`; Mon–Fri renders as `weekdays`, Sat+Sun as `weekends`.
 - **Permissions**: runs use `claude -p --permission-mode auto` so they don't hang on prompts (override with `--perm`). Needs Claude Code ≥2.1.83 and Opus 4.6+/Sonnet 4.6+.
 - **Overlap**: if a schedule's previous run is still live, the next fire is skipped.
 - **`--dir` must be a git repo** (the worktree hangs off its HEAD). Fully editable from the main TUI's bottom **schedules** section — `enter` opens a schedule's run logs; mutating actions need **shift** so a stray keystroke can't fire one: `N`/`E`/`X`/`T`/`R` add/edit/delete/toggle/run-now.

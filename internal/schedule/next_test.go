@@ -165,3 +165,53 @@ func TestDailyDaysOnlyFiresOnAllowedDay(t *testing.T) {
 		t.Fatalf("next fire from Tuesday = %v (ok=%v), want next Monday 09:00", next, ok)
 	}
 }
+
+func TestIntervalHonorsDays(t *testing.T) {
+	// every 15m, window 7–19, weekdays only.
+	sc := Schedule{Kind: KindInterval, EverySec: 900, StartHour: 7, EndHour: 19, Days: []int{1, 2, 3, 4, 5}, Enabled: true}
+
+	sat := time.Date(2026, 7, 4, 10, 0, 0, 0, time.Local) // Saturday
+	if sat.Weekday() != time.Saturday {
+		t.Fatalf("fixture wrong: %v not Saturday", sat)
+	}
+	if Due(sc, sat) {
+		t.Fatal("weekday-only interval must NOT fire on Saturday (the weekend-burn bug)")
+	}
+	// Next fire from Saturday lands on Monday inside the window.
+	next, ok := NextFire(sc, sat)
+	if !ok || next.Weekday() != time.Monday {
+		t.Fatalf("next fire from Sat = %v (ok=%v), want Monday", next, ok)
+	}
+	if h := next.Hour(); h < 7 || h >= 19 {
+		t.Fatalf("next fire hour %d outside window 7–19", h)
+	}
+
+	// On a Monday inside the window (and interval due), it fires.
+	mon := time.Date(2026, 7, 6, 10, 0, 0, 0, time.Local) // Monday
+	monSc := sc
+	monSc.LastFired = time.Date(2026, 7, 6, 9, 40, 0, 0, time.Local).Format(time.RFC3339)
+	if !Due(monSc, mon) {
+		t.Fatal("weekday interval should fire on Monday inside the window when due")
+	}
+}
+
+func TestSpecIntervalWithDays(t *testing.T) {
+	sc := Schedule{Kind: KindInterval, EverySec: 900, StartHour: 7, EndHour: 19, Days: []int{1, 2, 3, 4, 5}}
+	if got := Spec(sc); got != "every 15m · 7–19 · weekdays" {
+		t.Fatalf("Spec = %q, want 'every 15m · 7–19 · weekdays'", got)
+	}
+}
+
+func TestFormatDaysShorthand(t *testing.T) {
+	cases := map[string][]int{
+		"weekdays": {1, 2, 3, 4, 5},
+		"weekends": {0, 6},
+		"mon":      {1},
+		"mon,thu":  {1, 4},
+	}
+	for want, days := range cases {
+		if got := FormatDays(days); got != want {
+			t.Fatalf("FormatDays(%v) = %q, want %q", days, got, want)
+		}
+	}
+}
