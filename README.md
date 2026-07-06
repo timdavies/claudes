@@ -39,9 +39,14 @@ Run `claudes open` (or `stop`, `write`, `read`) with no name and you'll get a pi
 Optional, at `~/.config/claudes/config.toml`:
 
 ```toml
+# New sessions default to the "auto" permission mode. Override globally here
+# or per-project; an explicit `-- --permission-mode <x>` passthrough still wins.
+permission_mode = "auto"
+
 [projects.myapp]
-dir          = "~/projects/myapp"
-default_args = ["--dangerously-skip-permissions", "--worktree"]
+dir             = "~/projects/myapp"
+default_args    = ["--dangerously-skip-permissions", "--worktree"]
+permission_mode = "acceptEdits"
 
 [projects.myapp.hooks]
 post_stop = "cd $CLAUDES_DIR && git worktree prune"

@@ -15,10 +15,11 @@ type Hooks struct {
 }
 
 type Project struct {
-	Dir         string   `toml:"dir"`
-	Model       string   `toml:"model"`
-	DefaultArgs []string `toml:"default_args"`
-	Hooks       Hooks    `toml:"hooks"`
+	Dir            string   `toml:"dir"`
+	Model          string   `toml:"model"`
+	PermissionMode string   `toml:"permission_mode"`
+	DefaultArgs    []string `toml:"default_args"`
+	Hooks          Hooks    `toml:"hooks"`
 	// WorktreeCopy lists paths (relative to the project dir) that claudes copies
 	// from the main checkout into each new worktree it creates for this project —
 	// for untracked/gitignored personal context that `git worktree add` skips,
@@ -44,6 +45,7 @@ type Daemon struct {
 type Config struct {
 	DefaultArgs    []string           `toml:"default_args"`
 	Model          string             `toml:"model"`
+	PermissionMode string             `toml:"permission_mode"`
 	StopTimeout    int                `toml:"stop_timeout"`
 	Prefix         string             `toml:"prefix"`
 	TmuxSocket     string             `toml:"tmux_socket"`
@@ -72,13 +74,14 @@ func (c *Config) CostEnabled() bool {
 
 // Resolved is the merged settings for a single command invocation.
 type Resolved struct {
-	Project     string // empty if none
-	Dir         string
-	Model       string
-	Group        string // agent group; "" means the default group
-	DefaultArgs  []string
-	WorktreeCopy []string // paths copied from the main checkout into a new worktree
-	Hooks        Hooks
+	Project        string // empty if none
+	Dir            string
+	Model          string
+	PermissionMode string
+	Group          string // agent group; "" means the default group
+	DefaultArgs    []string
+	WorktreeCopy   []string // paths copied from the main checkout into a new worktree
+	Hooks          Hooks
 	// from global
 	StopTimeout int
 	Prefix      string
@@ -97,6 +100,10 @@ func defaultConfig() Config {
 		// Claude Code spawning `claudes new` produces a Haiku session by
 		// inheritance — surprising and easy to miss.
 		Model: "opus",
+		// Default new sessions to 'auto' so spawns get sensible auto-approval
+		// without a blanket acceptEdits. Overridable per-project or via an
+		// explicit `-- --permission-mode <x>` passthrough.
+		PermissionMode: "auto",
 		Models: map[string]string{
 			"haiku":  "haiku",
 			"sonnet": "sonnet",
@@ -188,6 +195,9 @@ func mergeOver(base, over *Config) {
 	if over.Model != "" {
 		base.Model = over.Model
 	}
+	if over.PermissionMode != "" {
+		base.PermissionMode = over.PermissionMode
+	}
 	if over.StopTimeout != 0 {
 		base.StopTimeout = over.StopTimeout
 	}
@@ -237,14 +247,15 @@ func mergeOver(base, over *Config) {
 //	cwd: working directory of the caller
 func (c *Config) Resolve(explicitDir, projectFlag, cwd string) (Resolved, error) {
 	r := Resolved{
-		Model:       c.Model,
-		DefaultArgs: append([]string(nil), c.DefaultArgs...),
-		Hooks:       c.Hooks,
-		StopTimeout: c.StopTimeout,
-		Prefix:      c.Prefix,
-		TmuxSocket:  c.TmuxSocket,
-		TmuxConfig:  c.TmuxConfig,
-		Models:      c.Models,
+		Model:          c.Model,
+		PermissionMode: c.PermissionMode,
+		DefaultArgs:    append([]string(nil), c.DefaultArgs...),
+		Hooks:          c.Hooks,
+		StopTimeout:    c.StopTimeout,
+		Prefix:         c.Prefix,
+		TmuxSocket:     c.TmuxSocket,
+		TmuxConfig:     c.TmuxConfig,
+		Models:         c.Models,
 	}
 
 	// Pick project name
@@ -275,6 +286,9 @@ func (c *Config) Resolve(explicitDir, projectFlag, cwd string) (Resolved, error)
 		}
 		if p.Model != "" {
 			r.Model = p.Model
+		}
+		if p.PermissionMode != "" {
+			r.PermissionMode = p.PermissionMode
 		}
 		if len(p.DefaultArgs) > 0 {
 			r.DefaultArgs = append([]string(nil), p.DefaultArgs...) // replace, not append

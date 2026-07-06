@@ -158,6 +158,13 @@ func spawnSession(client *tmux.Client, cfg *config.Config, resolved config.Resol
 	if resolved.Model != "" {
 		cmdline = append(cmdline, "--model", resolved.Model)
 	}
+	// Default the permission mode (config default is "auto"). An explicit
+	// `-- --permission-mode <x>` passthrough (or default_args) wins, so skip
+	// injecting when the caller already set one.
+	if resolved.PermissionMode != "" &&
+		!hasFlag(passthrough, "--permission-mode") && !hasFlag(resolved.DefaultArgs, "--permission-mode") {
+		cmdline = append(cmdline, "--permission-mode", resolved.PermissionMode)
+	}
 	if sessionID != "" {
 		cmdline = append(cmdline, "--session-id", sessionID)
 	}

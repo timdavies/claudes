@@ -101,23 +101,27 @@ func resurrectPin(client *tmux.Client, cfg *config.Config, name string, openTab 
 		return fmt.Errorf("no pinned agent named %q", name)
 	}
 	resolved := config.Resolved{
-		Project:     entry.Project,
-		Dir:         entry.Dir,
-		Model:       entry.Model,
-		Group:       entry.Group,
-		DefaultArgs: append([]string(nil), entry.DefaultArgs...),
-		Hooks:       cfg.Hooks,
-		StopTimeout: cfg.StopTimeout,
-		Prefix:      cfg.Prefix,
-		TmuxSocket:  cfg.TmuxSocket,
-		TmuxConfig:  cfg.TmuxConfig,
-		Models:      cfg.Models,
+		Project:        entry.Project,
+		Dir:            entry.Dir,
+		Model:          entry.Model,
+		PermissionMode: cfg.PermissionMode,
+		Group:          entry.Group,
+		DefaultArgs:    append([]string(nil), entry.DefaultArgs...),
+		Hooks:          cfg.Hooks,
+		StopTimeout:    cfg.StopTimeout,
+		Prefix:         cfg.Prefix,
+		TmuxSocket:     cfg.TmuxSocket,
+		TmuxConfig:     cfg.TmuxConfig,
+		Models:         cfg.Models,
 	}
-	// If the project still exists in config, prefer its hooks (matches
-	// the same merge order as cfg.Resolve at session-create time).
+	// If the project still exists in config, prefer its hooks and permission
+	// mode (matches the same merge order as cfg.Resolve at session-create time).
 	if p, ok := cfg.Projects[entry.Project]; ok {
 		if p.Hooks.PostNew != "" || p.Hooks.PostStop != "" {
 			resolved.Hooks = p.Hooks
+		}
+		if p.PermissionMode != "" {
+			resolved.PermissionMode = p.PermissionMode
 		}
 	}
 	if err := spawnSession(client, cfg, resolved, name, entry.PassthroughArgs, openTab); err != nil {
