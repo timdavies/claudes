@@ -67,6 +67,16 @@ var configScalars = map[string]struct {
 		get: func(c *config.Config) string { return c.Model },
 		set: func(c *config.Config, v string) error { c.Model = v; return nil },
 	},
+	"permission_mode": {
+		get: func(c *config.Config) string { return c.PermissionMode },
+		set: func(c *config.Config, v string) error {
+			if !validPermissionModes[v] {
+				return fmt.Errorf("permission_mode must be one of: %s", permissionModeList())
+			}
+			c.PermissionMode = v
+			return nil
+		},
+	},
 	"default_project": {
 		get: func(c *config.Config) string { return c.DefaultProject },
 		set: func(c *config.Config, v string) error { c.DefaultProject = v; return nil },
@@ -128,6 +138,21 @@ func runConfigSet(_ *cobra.Command, args []string) error {
 	}
 	fmt.Println(val)
 	return nil
+}
+
+// validPermissionModes mirrors claude's `--permission-mode` choices.
+var validPermissionModes = map[string]bool{
+	"acceptEdits": true, "auto": true, "bypassPermissions": true,
+	"manual": true, "dontAsk": true, "plan": true,
+}
+
+func permissionModeList() string {
+	keys := make([]string, 0, len(validPermissionModes))
+	for k := range validPermissionModes {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return strings.Join(keys, ", ")
 }
 
 func configKeys() string {
