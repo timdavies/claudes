@@ -149,8 +149,15 @@ func spawnSession(client *tmux.Client, cfg *config.Config, resolved config.Resol
 	// reads it back to estimate cost. A passthrough --session-id wins, so don't
 	// stomp it.
 	sessionID := uuidV4()
+	mintSessionID := true
 	if hasFlag(passthrough, "--session-id") || hasFlag(resolved.DefaultArgs, "--session-id") {
-		sessionID = ""
+		sessionID, mintSessionID = "", false
+	}
+	// Archive restore passes `--resume <id>`: claude reattaches that existing
+	// conversation, so don't also mint/pass a --session-id, but stamp the
+	// resumed id so cost tracking keeps keying off the same UUID.
+	if rid := resumeID(passthrough); rid != "" {
+		sessionID, mintSessionID = rid, false
 	}
 
 	cmdline := []string{"claude"}
@@ -165,7 +172,7 @@ func spawnSession(client *tmux.Client, cfg *config.Config, resolved config.Resol
 		!hasFlag(passthrough, "--permission-mode") && !hasFlag(resolved.DefaultArgs, "--permission-mode") {
 		cmdline = append(cmdline, "--permission-mode", resolved.PermissionMode)
 	}
-	if sessionID != "" {
+	if mintSessionID && sessionID != "" {
 		cmdline = append(cmdline, "--session-id", sessionID)
 	}
 	cmdline = append(cmdline, passthrough...)
@@ -259,6 +266,23 @@ func uuidV4() string {
 	b[6] = (b[6] & 0x0f) | 0x40 // version 4
 	b[8] = (b[8] & 0x3f) | 0x80 // variant 10
 	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
+}
+
+// resumeID returns the session id from a `--resume <id>` / `--resume=<id>` /
+// `-r <id>` passthrough, or "" if none. Used so archive restore reattaches the
+// original conversation instead of minting a fresh session.
+func resumeID(args []string) string {
+	for i, a := range args {
+		switch {
+		case a == "--resume" || a == "-r":
+			if i+1 < len(args) {
+				return args[i+1]
+			}
+		case strings.HasPrefix(a, "--resume="):
+			return strings.TrimPrefix(a, "--resume=")
+		}
+	}
+	return ""
 }
 
 // hasFlag reports whether args contains flag, either bare or as flag=value.

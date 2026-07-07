@@ -9,7 +9,7 @@ import (
 
 func TestRenderAgentsGroups(t *testing.T) {
 	rows := []agentRow{
-		{Name: "alpha", Status: session.StatusIdle},               // default group
+		{Name: "alpha", Status: session.StatusIdle}, // default group
 		{Name: "beta", Group: "review", Status: session.StatusIdle},
 		{Name: "gamma", Group: "review", Status: session.StatusIdle},
 	}

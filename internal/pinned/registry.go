@@ -29,6 +29,17 @@ type Entry struct {
 	// 0 means unset — those sort after ordered entries, by name. Reorder
 	// assigns sequential values; new pins get max+1 so they land at the bottom.
 	Order int `json:"order,omitempty"`
+
+	// Archived parks a session: its process is stopped but the entry is kept so
+	// it can be resurrected later with its context. Archived entries are hidden
+	// from the main roster and listed separately. The extra fields below make
+	// restore context-complete — SessionID lets us `claude --resume` the actual
+	// conversation rather than spawning a fresh one.
+	Archived    bool   `json:"archived,omitempty"`
+	SessionID   string `json:"session_id,omitempty"`
+	PR          string `json:"pr,omitempty"`
+	Description string `json:"description,omitempty"`
+	ArchivedAt  string `json:"archived_at,omitempty"`
 }
 
 type Registry struct {
@@ -167,6 +178,25 @@ func (r *Registry) MaxOrder() int {
 		return false, nil
 	})
 	return maxOrder
+}
+
+// SetArchived flips an existing entry's Archived flag (stamping ArchivedAt when
+// archiving). Returns an error if the name isn't in the registry.
+func (r *Registry) SetArchived(name string, archived bool) error {
+	return r.WithLock(func(agents map[string]Entry) (bool, error) {
+		e, ok := agents[name]
+		if !ok {
+			return false, errors.New("no such entry: " + name)
+		}
+		e.Archived = archived
+		if archived {
+			e.ArchivedAt = time.Now().UTC().Format(time.RFC3339)
+		} else {
+			e.ArchivedAt = ""
+		}
+		agents[name] = e
+		return true, nil
+	})
 }
 
 func (r *Registry) All() map[string]Entry {

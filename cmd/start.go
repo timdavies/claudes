@@ -124,7 +124,14 @@ func resurrectPin(client *tmux.Client, cfg *config.Config, name string, openTab 
 			resolved.PermissionMode = p.PermissionMode
 		}
 	}
-	if err := spawnSession(client, cfg, resolved, name, entry.PassthroughArgs, openTab); err != nil {
+	// Archived entries capture the Claude Code session id; resurrect them with
+	// `--resume` so the original conversation reloads. Plain pins leave SessionID
+	// empty and spawn fresh, exactly as before.
+	passthrough := append([]string(nil), entry.PassthroughArgs...)
+	if entry.SessionID != "" && resumeID(passthrough) == "" {
+		passthrough = append(passthrough, "--resume", entry.SessionID)
+	}
+	if err := spawnSession(client, cfg, resolved, name, passthrough, openTab); err != nil {
 		return err
 	}
 	full := session.FullName(cfg.Prefix, name)

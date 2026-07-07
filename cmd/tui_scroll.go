@@ -16,11 +16,14 @@ import (
 // line span [top, bot] occupied by the active row (agent or schedule), so the
 // viewport can keep it on screen. It composes exactly what View renders.
 func (m tuiModel) bodyGeometry() (lines []string, top, bot int) {
-	agentsCursor, schedCursor := -1, -1
-	if m.region == regionAgents {
+	agentsCursor, schedCursor, archCursor := -1, -1, -1
+	switch m.region {
+	case regionAgents:
 		agentsCursor = m.cursor
-	} else {
+	case regionSchedules:
 		schedCursor = m.schedCursor
+	case regionArchived:
+		archCursor = m.archCursor
 	}
 
 	var blocks []string
@@ -46,6 +49,19 @@ func (m tuiModel) bodyGeometry() (lines []string, top, bot int) {
 		if m.region == regionSchedules {
 			// Header sits on schedStart; schedule i on schedStart+1+i.
 			top = schedStart + 1 + m.schedCursor
+			bot = top
+		}
+	}
+
+	if arch := renderArchived(m.archived, archCursor, m.width); arch != "" {
+		if len(lines) > 0 {
+			lines = append(lines, "") // blank separator
+		}
+		archStart := len(lines)
+		lines = append(lines, strings.Split(strings.TrimRight(arch, "\n"), "\n")...)
+		if m.region == regionArchived {
+			// Header sits on archStart; entry i on archStart+1+i.
+			top = archStart + 1 + m.archCursor
 			bot = top
 		}
 	}

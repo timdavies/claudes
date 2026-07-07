@@ -57,6 +57,10 @@ func collectSessions(client *tmux.Client, cfg *config.Config, cache *session.Env
 		}
 		for name, e := range reg.All() {
 			pinOrder[name] = e.Order
+			// Archived agents live in their own view, not the main roster.
+			if e.Archived {
+				continue
+			}
 			if live[name] {
 				continue
 			}
