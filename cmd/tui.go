@@ -119,7 +119,21 @@ type tuiModel struct {
 
 	exitAction exitKind
 	exitName   string
+
+	// fastTicks counts down remaining fast (interactive) refresh cycles. Any
+	// keypress resets it to tickBurst; each background refresh consumes one.
+	// At zero the tick falls back to the slow idle cadence, so an unattended
+	// TUI stops fanning out per-session tmux subprocesses every second.
+	fastTicks int
 }
+
+// Refresh cadence: the tick only drives background data refresh — input and
+// rendering are event-driven, so slowing it while idle costs no snappiness.
+const (
+	tickIdle  = 5 * time.Second
+	tickFast  = time.Second
+	tickBurst = 5
+)
 
 type tickMsg time.Time
 type rowsMsg []agentRow
@@ -145,8 +159,8 @@ type openedURLMsg struct {
 	err error
 }
 
-func tick() tea.Cmd {
-	return tea.Tick(time.Second, func(t time.Time) tea.Msg { return tickMsg(t) })
+func tickAfter(d time.Duration) tea.Cmd {
+	return tea.Tick(d, func(t time.Time) tea.Msg { return tickMsg(t) })
 }
 
 // loadRowsCmd refreshes rows off the event loop. Row-loading now includes an
@@ -155,7 +169,7 @@ func loadRowsCmd(client *tmux.Client, cfg *config.Config) tea.Cmd {
 	return func() tea.Msg { return rowsMsg(loadAgentRows(client, cfg)) }
 }
 
-func (m tuiModel) Init() tea.Cmd { return tick() }
+func (m tuiModel) Init() tea.Cmd { return tickAfter(tickFast) }
 
 func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
@@ -166,7 +180,12 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.rows = mergeRows(m.rows, []agentRow(msg), &m.cursor)
 		(&m).normalizeRegion()
 		(&m).ensureVisible()
-		return m, tick()
+		next := tickIdle
+		if m.fastTicks > 0 {
+			m.fastTicks--
+			next = tickFast
+		}
+		return m, tickAfter(next)
 	case schedulesMsg:
 		m.schedules = msg.schedules
 		m.schedLastRun = msg.lastRun
@@ -246,6 +265,9 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Keep the active row within the scroll viewport after any navigation.
 		if mm, ok := md.(tuiModel); ok {
 			(&mm).ensureVisible()
+			// Any keystroke means the user is active: refresh fast for a short
+			// burst, then decay back to the idle cadence.
+			mm.fastTicks = tickBurst
 			return mm, cmd
 		}
 		return md, cmd
