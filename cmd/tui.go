@@ -117,6 +117,13 @@ type tuiModel struct {
 	archived   []archivedEntry
 	archCursor int
 
+	// Incremental filter over the agent list, toggled with '/'. While active,
+	// only rows whose name or group contains filter (case-insensitive) render,
+	// and up/down move between matches. The cursor keeps indexing the full
+	// m.rows slice so activate/reorder/mergeRows stay correct.
+	filtering bool
+	filter    string
+
 	mode       tuiMode
 	confirmRow agentRow          // row pending kill confirmation (mode == modeConfirmKill)
 	form       *newForm          // active new-agent form (mode == modeNew)
@@ -201,6 +208,9 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(loadRowsCmd(m.client, m.cfg, m.envCache), loadArchivedCmd())
 	case rowsMsg:
 		m.rows = mergeRows(m.rows, []agentRow(msg), &m.cursor)
+		if m.filtering {
+			(&m).snapCursorToMatch()
+		}
 		(&m).normalizeRegion()
 		(&m).ensureVisible()
 		next := tickIdle
@@ -305,16 +315,29 @@ func (m tuiModel) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.region == regionArchived {
 		return m.updateArchivedList(msg)
 	}
+	if m.filtering {
+		if mm, cmd, handled := m.updateFilterKey(msg); handled {
+			return mm, cmd
+		}
+	}
 	switch msg.String() {
+	case "/":
+		m.filtering = true
+		m.col = 0
+		return m, nil
 	case "q", "esc", "ctrl+c":
 		return m, tea.Quit
 	case "up", "k":
-		if m.cursor > 0 {
+		if m.filtering {
+			(&m).moveMatch(-1)
+		} else if m.cursor > 0 {
 			m.cursor--
 			m.col = 0
 		}
 	case "down", "j":
-		if m.cursor < len(m.rows)-1 {
+		if m.filtering {
+			(&m).moveMatch(1)
+		} else if m.cursor < len(m.rows)-1 {
 			m.cursor++
 			m.col = 0
 		} else if len(m.schedules) > 0 {
@@ -645,6 +668,15 @@ func (m tuiModel) footer() string {
 		return confirmStyle.Render(fmt.Sprintf("%s %s? ", verb, m.confirmRow.Name)) + cardMeta.Render("y/n")
 	case modeScheduleConfirmRm:
 		return confirmStyle.Render(fmt.Sprintf("delete %s? ", m.schedToRm.Name)) + cardMeta.Render("y/n")
+	}
+	if m.filtering {
+		fr, _ := m.filteredRows()
+		prompt := cardSelected.Render(" /"+m.filter+" ") +
+			cardMeta.Render(fmt.Sprintf("  (%d)   ↑/↓ match  enter open  esc clear", len(fr)))
+		if m.status != "" {
+			return cardMeta.Render(m.status) + "\n" + prompt
+		}
+		return prompt
 	}
 	var hint string
 	if m.region == regionArchived {

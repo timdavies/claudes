@@ -26,18 +26,31 @@ func (m tuiModel) bodyGeometry() (lines []string, top, bot int) {
 		archCursor = m.archCursor
 	}
 
+	// While filtering, render only matching rows; the active row's index within
+	// that filtered slice drives the scroll span.
+	viewRows, blockCursor := m.rows, agentsCursor
+	if m.filtering {
+		fr, ci := m.filteredRows()
+		viewRows = fr
+		if m.region == regionAgents {
+			blockCursor = ci
+		} else {
+			blockCursor = -1
+		}
+	}
+
 	var blocks []string
-	if len(m.rows) > 0 {
-		blocks = renderAgentBlocks(m.rows, agentsCursor, m.col, m.width)
+	if len(viewRows) > 0 {
+		blocks = renderAgentBlocks(viewRows, blockCursor, m.col, m.width)
 	}
 	starts := make([]int, len(blocks))
 	for i, b := range blocks {
 		starts[i] = len(lines)
 		lines = append(lines, strings.Split(b, "\n")...)
 	}
-	if m.region == regionAgents && m.cursor >= 0 && m.cursor < len(blocks) {
-		top = starts[m.cursor]
-		bot = top + lipgloss.Height(blocks[m.cursor]) - 1
+	if m.region == regionAgents && blockCursor >= 0 && blockCursor < len(blocks) {
+		top = starts[blockCursor]
+		bot = top + lipgloss.Height(blocks[blockCursor]) - 1
 	}
 
 	if sched := renderSchedules(m.schedules, m.schedLastRun, m.schedCost, schedCursor, m.width); sched != "" {
