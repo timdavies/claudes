@@ -33,8 +33,16 @@ type agentRow struct {
 // collectSessions returns the merged session list both front-ends start from:
 // live tmux sessions plus paused pinned agents (those whose tmux session is
 // gone), sorted by name.
-func collectSessions(client *tmux.Client, cfg *config.Config) []session.Session {
-	sessions, err := session.List(client, cfg)
+func collectSessions(client *tmux.Client, cfg *config.Config, cache *session.EnvCache) []session.Session {
+	var (
+		sessions []session.Session
+		err      error
+	)
+	if cache != nil {
+		sessions, err = session.ListCached(client, cfg, cache)
+	} else {
+		sessions, err = session.List(client, cfg)
+	}
 	if err != nil {
 		return nil
 	}
@@ -100,8 +108,8 @@ func collectSessions(client *tmux.Client, cfg *config.Config) []session.Session 
 // entry, so we verify each tracked session_id is still live and prune the ones
 // that aren't. When the backend is unreachable (List errors) we trust the
 // registry rather than blanking every indicator.
-func loadAgentRows(client *tmux.Client, cfg *config.Config) []agentRow {
-	sessions := collectSessions(client, cfg)
+func loadAgentRows(client *tmux.Client, cfg *config.Config, cache *session.EnvCache) []agentRow {
+	sessions := collectSessions(client, cfg, cache)
 
 	// TabSID/HasTab come straight from the registry — no per-tick mc.List()
 	// (osascript) round-trip. Liveness is verified lazily on Enter (resolveTab),
@@ -148,9 +156,9 @@ func loadAgentRows(client *tmux.Client, cfg *config.Config) []agentRow {
 var (
 	cardName       = lipgloss.NewStyle().Bold(true)
 	cardNamePaused = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("8"))
-	cardModel      = lipgloss.NewStyle().Foreground(lipgloss.Color("13")) // magenta
-	cardPR         = lipgloss.NewStyle().Foreground(lipgloss.Color("12")) // blue
-	cardMeta       = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))  // dim
+	cardModel      = lipgloss.NewStyle().Foreground(lipgloss.Color("13"))                                            // magenta
+	cardPR         = lipgloss.NewStyle().Foreground(lipgloss.Color("12"))                                            // blue
+	cardMeta       = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))                                             // dim
 	cardGroup      = lipgloss.NewStyle().Foreground(lipgloss.Color("11")).Bold(true)                                 // yellow
 	cardCost       = lipgloss.NewStyle().Foreground(lipgloss.Color("10"))                                            // green
 	cardSelected   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("0")).Background(lipgloss.Color("14")) // black-on-cyan chip

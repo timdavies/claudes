@@ -78,6 +78,27 @@ func NormalizeGroup(group string) string {
 // inference from cwd/process args for sessions created before the stamp
 // was added, or for sessions started via raw tmux outside of claudes new.
 func List(client *tmux.Client, cfg *config.Config) ([]Session, error) {
+	return listWith(client, cfg, func(name string, _ int) map[string]string {
+		env, _ := client.SessionEnv(name) // best-effort
+		return env
+	})
+}
+
+// ListCached is List backed by an env cache: it reuses a session's previously
+// fetched tmux environment (keyed by pane_pid, expiring after a short TTL)
+// instead of spawning a `tmux show-environment` per session on every call. The
+// TUI uses this so its interactive fast-refresh bursts don't fan out a
+// subprocess per agent each tick; one-shot callers like `ls` use plain List.
+func ListCached(client *tmux.Client, cfg *config.Config, cache *EnvCache) ([]Session, error) {
+	return listWith(client, cfg, func(name string, panePID int) map[string]string {
+		return cache.fetch(client, name, panePID)
+	})
+}
+
+// envFunc resolves a session's tmux environment given its full name and pane_pid.
+type envFunc func(fullName string, panePID int) map[string]string
+
+func listWith(client *tmux.Client, cfg *config.Config, getEnv envFunc) ([]Session, error) {
 	infos, err := client.List()
 	if err != nil {
 		return nil, err
@@ -87,7 +108,7 @@ func List(client *tmux.Client, cfg *config.Config) ([]Session, error) {
 		if !strings.HasPrefix(in.Name, cfg.Prefix) {
 			continue
 		}
-		env, _ := client.SessionEnv(in.Name) // best-effort
+		env := getEnv(in.Name, in.PanePID) // best-effort
 		// Scheduled-prompt runs are ephemeral and surfaced through the schedules
 		// section, not the agent list — keep them out of ls/TUI/daemon-summaries.
 		if env["CLAUDES_SCHEDULED"] == "1" {

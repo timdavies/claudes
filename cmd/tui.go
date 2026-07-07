@@ -51,8 +51,8 @@ func runTUI() error {
 	client := newClient(cfg)
 	ensureDaemonForCmd(false)
 
-	m := tuiModel{cfg: cfg, client: client, width: terminalWidth()}
-	m.rows = loadAgentRows(client, cfg)
+	m := tuiModel{cfg: cfg, client: client, width: terminalWidth(), envCache: session.NewEnvCache()}
+	m.rows = loadAgentRows(client, cfg, m.envCache)
 	m.schedules, m.schedLastRun, m.schedCost = loadSchedulesNow()
 	(&m).normalizeRegion()
 
@@ -125,6 +125,10 @@ type tuiModel struct {
 	// At zero the tick falls back to the slow idle cadence, so an unattended
 	// TUI stops fanning out per-session tmux subprocesses every second.
 	fastTicks int
+
+	// envCache memoizes per-session tmux env across refresh ticks so a burst of
+	// fast ticks doesn't spawn a show-environment subprocess per agent each time.
+	envCache *session.EnvCache
 }
 
 // Refresh cadence: the tick only drives background data refresh — input and
@@ -163,10 +167,10 @@ func tickAfter(d time.Duration) tea.Cmd {
 	return tea.Tick(d, func(t time.Time) tea.Msg { return tickMsg(t) })
 }
 
-// loadRowsCmd refreshes rows off the event loop. Row-loading now includes an
-// AppleScript round-trip to verify tab liveness, so it must not block Update.
-func loadRowsCmd(client *tmux.Client, cfg *config.Config) tea.Cmd {
-	return func() tea.Msg { return rowsMsg(loadAgentRows(client, cfg)) }
+// loadRowsCmd refreshes rows off the event loop. Row-loading fans out tmux
+// calls (via the env cache), so it runs as a Cmd rather than blocking Update.
+func loadRowsCmd(client *tmux.Client, cfg *config.Config, cache *session.EnvCache) tea.Cmd {
+	return func() tea.Msg { return rowsMsg(loadAgentRows(client, cfg, cache)) }
 }
 
 func (m tuiModel) Init() tea.Cmd { return tickAfter(tickFast) }
@@ -175,7 +179,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tickMsg:
 		// Kick off an async refresh; the next tick is scheduled when it lands.
-		return m, tea.Batch(loadRowsCmd(m.client, m.cfg), loadSchedulesCmd())
+		return m, tea.Batch(loadRowsCmd(m.client, m.cfg, m.envCache), loadSchedulesCmd())
 	case rowsMsg:
 		m.rows = mergeRows(m.rows, []agentRow(msg), &m.cursor)
 		(&m).normalizeRegion()
@@ -212,14 +216,14 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.status = "killed " + msg.name
 		}
-		return m, loadRowsCmd(m.client, m.cfg)
+		return m, loadRowsCmd(m.client, m.cfg, m.envCache)
 	case pausedMsg:
 		if msg.err != nil {
 			m.status = fmt.Sprintf("pause %s: %v", msg.name, msg.err)
 		} else {
 			m.status = "paused " + msg.name
 		}
-		return m, loadRowsCmd(m.client, m.cfg)
+		return m, loadRowsCmd(m.client, m.cfg, m.envCache)
 	case pinToggledMsg:
 		if msg.err != nil {
 			m.status = fmt.Sprintf("pin %s: %v", msg.name, msg.err)
@@ -228,14 +232,14 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.status = "unpinned " + msg.name
 		}
-		return m, loadRowsCmd(m.client, m.cfg)
+		return m, loadRowsCmd(m.client, m.cfg, m.envCache)
 	case spawnedMsg:
 		if msg.err != nil {
 			m.status = fmt.Sprintf("new %s: %v", msg.name, msg.err)
 		} else {
 			m.status = "spawned " + msg.name
 		}
-		return m, loadRowsCmd(m.client, m.cfg)
+		return m, loadRowsCmd(m.client, m.cfg, m.envCache)
 	case openedURLMsg:
 		if msg.err != nil {
 			m.status = fmt.Sprintf("open failed: %v", msg.err)
@@ -349,7 +353,7 @@ func (m tuiModel) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.status = ""
 	case "r":
 		m.status = "refreshed"
-		return m, loadRowsCmd(m.client, m.cfg)
+		return m, loadRowsCmd(m.client, m.cfg, m.envCache)
 	}
 	return m, nil
 }
@@ -549,7 +553,7 @@ func (m tuiModel) activate() (tea.Model, tea.Cmd) {
 		if sid := resolveTab(mc, reg, r); sid != "" {
 			if err := mc.Focus(sid); err == nil {
 				m.status = "focused " + r.Name
-				return m, loadRowsCmd(m.client, m.cfg)
+				return m, loadRowsCmd(m.client, m.cfg, m.envCache)
 			} else if !mc.IsNotFound(err) {
 				m.status = "focus failed: " + err.Error()
 				return m, nil
@@ -558,7 +562,7 @@ func (m tuiModel) activate() (tea.Model, tea.Cmd) {
 		}
 		maybeOpenTab(m.cfg, r.Name, r.Dir)
 		m.status = "opened tab for " + r.Name
-		return m, loadRowsCmd(m.client, m.cfg)
+		return m, loadRowsCmd(m.client, m.cfg, m.envCache)
 	}
 	// Tab integration disabled: quit and attach directly.
 	m.exitAction = exitAttach

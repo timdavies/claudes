@@ -33,7 +33,7 @@ func runLs(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	client := newClient(cfg)
-	rows := loadAgentRows(client, cfg)
+	rows := loadAgentRows(client, cfg, nil)
 	if lsProject != "" {
 		filtered := rows[:0]
 		for _, r := range rows {
