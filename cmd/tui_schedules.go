@@ -409,10 +409,32 @@ func (m tuiModel) updateScheduleLogs(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		} else if v.sel < len(v.runs)-1 {
 			v.sel++
 		}
+	case "pgup", "ctrl+u":
+		if v.body != "" {
+			v.scroll = max(0, v.scroll-10)
+		}
+	case "pgdown", "ctrl+d":
+		if v.body != "" {
+			v.scroll += 10
+		}
+	case "g", "home":
+		if v.body != "" {
+			v.scroll = 0
+		} else {
+			v.sel = 0
+		}
+	case "G", "end":
+		if v.body != "" {
+			v.scroll = 1 << 30 // clamped to the bottom in view()
+		} else if len(v.runs) > 0 {
+			v.sel = len(v.runs) - 1
+		}
 	case "enter":
 		if v.body == "" && len(v.runs) > 0 {
 			v.body = loadRunLog(v.runs[v.sel])
-			v.scroll = 0
+			// Tail by default: run output's useful part (result/errors) is at the
+			// end. A huge offset clamps to the bottom on the next render.
+			v.scroll = 1 << 30
 		}
 	}
 	return m, nil
@@ -527,7 +549,8 @@ func (v *schedLogView) view(width, height int) string {
 		}
 		end := min(len(lines), v.scroll+visible)
 		b.WriteString(strings.Join(lines[v.scroll:end], "\n"))
-		b.WriteString("\n\n" + formGhost.Render("↑/↓ scroll · esc back · q close"))
+		pos := fmt.Sprintf(" · %d–%d/%d", v.scroll+1, end, len(lines))
+		b.WriteString("\n\n" + formGhost.Render("↑/↓ scroll · g/G top/bottom · esc back · q close"+pos))
 		return b.String()
 	}
 	if len(v.runs) == 0 {
@@ -535,7 +558,24 @@ func (v *schedLogView) view(width, height int) string {
 		b.WriteString("\n\n" + formGhost.Render("esc back"))
 		return b.String()
 	}
-	for i, r := range v.runs {
+	// Window the list to the viewport, following the selection, so a schedule
+	// with hundreds of runs doesn't overflow the terminal (and strand the
+	// footer + selected row off-screen). Reserve rows for title(2) + footer(2)
+	// + up-to-two "more" indicators.
+	perPage := max(1, height-6)
+	start := 0
+	if v.sel >= perPage {
+		start = v.sel - perPage + 1
+	}
+	if start > len(v.runs)-perPage {
+		start = max(0, len(v.runs)-perPage)
+	}
+	end := min(len(v.runs), start+perPage)
+	if start > 0 {
+		b.WriteString(formGhost.Render(fmt.Sprintf("▲ %d more above", start)) + "\n")
+	}
+	for i := start; i < end; i++ {
+		r := v.runs[i]
 		marker := "  "
 		if i == v.sel {
 			marker = formFocus.Render("▸ ")
@@ -552,6 +592,9 @@ func (v *schedLogView) view(width, height int) string {
 			meta += "  " + cardCost.Render(formatUSD(r.Cost))
 		}
 		b.WriteString(fmt.Sprintf("%s%-11s %s\n", marker, r.Status, meta))
+	}
+	if end < len(v.runs) {
+		b.WriteString(formGhost.Render(fmt.Sprintf("▼ %d more below", len(v.runs)-end)) + "\n")
 	}
 	b.WriteString("\n" + formGhost.Render("↑/↓ select · enter open · esc back · q close"))
 	return b.String()
