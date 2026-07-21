@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -29,6 +30,7 @@ var (
 	taskDisable bool
 	taskRunID   string
 	taskDays    string
+	taskJSON    bool
 )
 
 var tasksCmd = &cobra.Command{
@@ -99,6 +101,13 @@ var tasksEditCmd = &cobra.Command{
 	RunE:  runTaskEdit,
 }
 
+var tasksShowCmd = &cobra.Command{
+	Use:   "show <id|name>",
+	Short: "Print a task's full config, including its prompt",
+	Args:  cobra.ExactArgs(1),
+	RunE:  runTaskShow,
+}
+
 func init() {
 	tasksAddCmd.Flags().StringVar(&taskKind, "kind", "", "interval | daily | once")
 	tasksAddCmd.Flags().StringVar(&taskEvery, "every", "", "interval cadence, e.g. 5m, 2h")
@@ -115,6 +124,8 @@ func init() {
 
 	tasksLogsCmd.Flags().StringVar(&taskRunID, "run", "", "dump this run's captured output")
 
+	tasksShowCmd.Flags().BoolVar(&taskJSON, "json", false, "emit the task config as JSON")
+
 	// edit mirrors add's flag surface; only the flags actually passed are
 	// applied, so unspecified fields keep their current values. Enable/disable
 	// have their own subcommands, so there's no --disabled here.
@@ -130,7 +141,7 @@ func init() {
 	tasksEditCmd.Flags().StringVar(&taskWindow, "window", "", "active hours for interval, e.g. 9-18 (empty clears)")
 	tasksEditCmd.Flags().StringVar(&taskProject, "project", "", "project name from config")
 
-	tasksCmd.AddCommand(tasksAddCmd, tasksLsCmd, tasksRmCmd, tasksEnableCmd, tasksDisableCmd, tasksRunCmd, tasksLogsCmd, tasksEditCmd)
+	tasksCmd.AddCommand(tasksAddCmd, tasksLsCmd, tasksRmCmd, tasksEnableCmd, tasksDisableCmd, tasksRunCmd, tasksLogsCmd, tasksEditCmd, tasksShowCmd)
 	rootCmd.AddCommand(tasksCmd)
 }
 
@@ -364,6 +375,106 @@ func runTaskLs(cmd *cobra.Command, args []string) error {
 		fmt.Printf("#%s  %-16s %-18s %-8s %s%s%s\n", sc.ID, sc.Name, schedule.Spec(sc), state, next, costStr, last)
 	}
 	return nil
+}
+
+// resolveTask looks a task up by id first, then by exact (case-insensitive)
+// name. Name is a convenience for the CLI; ids stay canonical.
+func resolveTask(store *schedule.Store, arg string) (schedule.Schedule, error) {
+	if sc, err := store.Get(arg); err == nil {
+		return sc, nil
+	}
+	for _, sc := range store.All() {
+		if strings.EqualFold(sc.Name, arg) {
+			return sc, nil
+		}
+	}
+	return schedule.Schedule{}, fmt.Errorf("no task with id or name %q", arg)
+}
+
+func runTaskShow(cmd *cobra.Command, args []string) error {
+	store, err := scheduleStore()
+	if err != nil {
+		return err
+	}
+	sc, err := resolveTask(store, args[0])
+	if err != nil {
+		return err
+	}
+	now := time.Now()
+	next := "—"
+	if sc.Enabled {
+		next = humanizeNext(sc, now)
+	}
+	var lastRun *schedule.Run
+	if runs := store.RunsFor(sc.ID); len(runs) > 0 {
+		lastRun = &runs[0]
+	}
+
+	if taskJSON {
+		payload := map[string]any{
+			"schedule":  sc,
+			"spec":      schedule.Spec(sc),
+			"next_fire": next,
+		}
+		if lastRun != nil {
+			payload["last_run"] = lastRun
+		}
+		b, err := json.MarshalIndent(payload, "", "  ")
+		if err != nil {
+			return err
+		}
+		fmt.Println(string(b))
+		return nil
+	}
+
+	enabled := "true"
+	if !sc.Enabled {
+		enabled = "false"
+	}
+	fmt.Printf("#%s  %s\n", sc.ID, sc.Name)
+	fmt.Printf("  kind:      %s\n", sc.Kind)
+	fmt.Printf("  cadence:   %s\n", schedule.Spec(sc))
+	if sc.Kind == schedule.KindInterval {
+		fmt.Printf("  window:    %d–%d\n", sc.StartHour, sc.EndHour)
+	}
+	if len(sc.Days) > 0 {
+		fmt.Printf("  days:      %s\n", schedule.FormatDays(sc.Days))
+	}
+	fmt.Printf("  dir:       %s\n", orDash(sc.Dir))
+	if sc.Project != "" {
+		fmt.Printf("  project:   %s\n", sc.Project)
+	}
+	fmt.Printf("  model:     %s\n", orDefault(sc.Model))
+	fmt.Printf("  perm:      %s\n", orDefaultVal(sc.PermMode, "auto"))
+	fmt.Printf("  enabled:   %s\n", enabled)
+	fmt.Printf("  next fire: %s\n", next)
+	if lastRun != nil {
+		when := lastRun.StartedAt
+		if lastRun.FinishedAt != "" {
+			when = lastRun.FinishedAt
+		}
+		fmt.Printf("  last run:  %s  (%s)\n", lastRun.Status, when)
+	} else {
+		fmt.Printf("  last run:  —\n")
+	}
+	fmt.Printf("\nprompt:\n%s\n", sc.Prompt)
+	return nil
+}
+
+func orDash(s string) string {
+	if s == "" {
+		return "—"
+	}
+	return s
+}
+
+func orDefault(s string) string { return orDefaultVal(s, "(default)") }
+
+func orDefaultVal(s, def string) string {
+	if s == "" {
+		return def
+	}
+	return s
 }
 
 func runTaskRm(cmd *cobra.Command, args []string) error {

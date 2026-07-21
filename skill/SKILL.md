@@ -137,6 +137,7 @@ claudes tasks add --kind daily    --at 09:00 --days mon       --name weekly --di
 claudes tasks add --kind daily    --at 09:00 --days mon,thu   --name twiceweek --dir <repo> --prompt "..." # Mon + Thu
 claudes tasks add --kind once     --at "2026-06-20 14:00" --name oneoff --dir <repo> --prompt "..."
 claudes tasks ls                       # id, name, cadence, enabled, next-fire, last-run status
+claudes tasks show 3                   # full config incl. the prompt (accepts name too; --json for scripting)
 claudes tasks enable 3 / disable 3     # toggle
 claudes tasks run 3                    # fire now (ignores window + enabled)
 claudes tasks logs 3                   # run history; `--run <id>` dumps one run's captured output
