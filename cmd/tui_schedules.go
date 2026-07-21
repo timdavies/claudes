@@ -324,18 +324,34 @@ func renderSchedules(schedules []schedule.Schedule, lastRun map[string]string, c
 		width = 80
 	}
 	now := time.Now()
-	nameW := 0
-	for _, sc := range schedules {
-		if w := lipgloss.Width(sc.Name); w > nameW {
-			nameW = w
+	// Pre-compute each column's raw text so lanes can be padded to a common
+	// width. Dot leads the row; name | cadence | next | cost line up as lanes.
+	type row struct {
+		sc      schedule.Schedule
+		cadence string
+		next    string
+		cost    string
+	}
+	rows := make([]row, len(schedules))
+	nameW, cadenceW, nextW, costW := 0, 0, 0, 0
+	for i, sc := range schedules {
+		next := "—"
+		if sc.Enabled {
+			next = humanizeNext(sc, now)
 		}
+		r := row{sc: sc, cadence: schedule.Spec(sc), next: next, cost: formatUSD(cost[sc.ID])}
+		rows[i] = r
+		nameW = max(nameW, lipgloss.Width(sc.Name))
+		cadenceW = max(cadenceW, lipgloss.Width(r.cadence))
+		nextW = max(nextW, lipgloss.Width(r.next))
+		costW = max(costW, lipgloss.Width(r.cost))
 	}
 
 	var b strings.Builder
 	b.WriteString(schedHeader.Render("schedules") + "\n")
-	for i, sc := range schedules {
+	for i, r := range rows {
 		dot := schedOff.Render("○")
-		if sc.Enabled {
+		if r.sc.Enabled {
 			dot = schedOn.Render("●")
 		}
 		// Selection is the bright name-chip, matching the agent list.
@@ -343,18 +359,15 @@ func renderSchedules(schedules []schedule.Schedule, lastRun map[string]string, c
 		if i == cursor {
 			nameStyle = cardSelected
 		}
-		name := nameStyle.Render(sc.Name) + strings.Repeat(" ", max(0, nameW-lipgloss.Width(sc.Name)))
-		next := "—"
-		if sc.Enabled {
-			next = humanizeNext(sc, now)
-		}
-		line := fmt.Sprintf("  %s  %s  %s  %s",
-			name, cardMeta.Render(pad(schedule.Spec(sc), 16)),
-			dot, schedNextSty.Render(pad(next, 14)))
-		// Always show a $ amount ($0.00 when no spend) so the column aligns.
-		line += "  " + cardCost.Render(formatUSD(cost[sc.ID]))
-		if last := lastRun[sc.ID]; last != "" {
-			line += "  " + cardMeta.Render("last: "+last)
+		name := nameStyle.Render(r.sc.Name) + spaces(nameW-lipgloss.Width(r.sc.Name))
+		cadence := cardMeta.Render(r.cadence) + spaces(cadenceW-lipgloss.Width(r.cadence))
+		next := schedNextSty.Render(r.next) + spaces(nextW-lipgloss.Width(r.next))
+		// Cost right-aligned in its lane so the $ amounts line up on the decimal.
+		costCell := spaces(costW-lipgloss.Width(r.cost)) + cardCost.Render(r.cost)
+
+		line := "  " + dot + " " + name + " " + cadence + " " + next + " " + costCell
+		if last := lastRun[r.sc.ID]; last != "" {
+			line += " " + cardMeta.Render("last: "+last)
 		}
 		// ansi.Truncate counts visible columns, not bytes — truncating the raw
 		// styled string (as the old rune-based truncate did) sliced through
@@ -363,6 +376,8 @@ func renderSchedules(schedules []schedule.Schedule, lastRun map[string]string, c
 	}
 	return b.String()
 }
+
+func spaces(n int) string { return strings.Repeat(" ", max(0, n)) }
 
 func pad(s string, w int) string {
 	if lipgloss.Width(s) >= w {
