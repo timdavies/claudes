@@ -285,6 +285,44 @@ func resumeID(args []string) string {
 	return ""
 }
 
+// claudeValueFlags are the `claude` flags that consume the following token as
+// their value. Used to tell a flag's value apart from the positional kickoff
+// prompt when stripping the latter on resurrect. Kept deliberately broad; a
+// missing entry only risks mistaking a trailing flag-value for the prompt, and
+// only for the single last token (see stripKickoffPrompt).
+var claudeValueFlags = map[string]bool{
+	"--model": true, "--fallback-model": true, "--permission-mode": true,
+	"--session-id": true, "--resume": true, "-r": true, "--agent": true,
+	"--agents": true, "--add-dir": true, "--append-system-prompt": true,
+	"--system-prompt": true, "--betas": true, "--debug-file": true,
+	"--allowedTools": true, "--allowed-tools": true, "--disallowedTools": true,
+	"--disallowed-tools": true, "--tools": true, "--effort": true,
+	"--file": true, "--input-format": true, "--output-format": true,
+	"--json-schema": true, "--max-budget-usd": true, "--mcp-config": true,
+	"-n": true, "--name": true, "--plugin-dir": true, "--plugin-url": true,
+	"--setting-sources": true, "--settings": true,
+	"--permission-prompt-tool": true, "--remote-control-session-name-prefix": true,
+}
+
+// stripKickoffPrompt removes a trailing positional prompt (the argument claude
+// auto-submits at boot) from a passthrough arg list, leaving flags intact. It
+// only ever considers the final token, and drops it only when it's a bare
+// value NOT consumed by a preceding value-flag — so `--model opus` keeps
+// "opus" while `--model opus "do the thing"` drops "do the thing".
+func stripKickoffPrompt(args []string) []string {
+	if len(args) == 0 {
+		return args
+	}
+	last := args[len(args)-1]
+	if strings.HasPrefix(last, "-") {
+		return append([]string(nil), args...) // a flag, not a prompt
+	}
+	if len(args) >= 2 && claudeValueFlags[args[len(args)-2]] {
+		return append([]string(nil), args...) // last is a value-flag's value
+	}
+	return append([]string(nil), args[:len(args)-1]...)
+}
+
 // hasFlag reports whether args contains flag, either bare or as flag=value.
 func hasFlag(args []string, flag string) bool {
 	for _, a := range args {

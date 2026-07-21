@@ -124,10 +124,12 @@ func resurrectPin(client *tmux.Client, cfg *config.Config, name string, openTab 
 			resolved.PermissionMode = p.PermissionMode
 		}
 	}
-	// Archived entries capture the Claude Code session id; resurrect them with
-	// `--resume` so the original conversation reloads. Plain pins leave SessionID
-	// empty and spawn fresh, exactly as before.
-	passthrough := append([]string(nil), entry.PassthroughArgs...)
+	// A session's kickoff prompt (the positional arg claude auto-submits on
+	// boot) is a ONE-TIME thing — resurrecting must bring the agent back idle,
+	// not re-run its birth prompt. Strip it from the stored passthrough. Done
+	// here (the single resurrect choke point) so it also fixes pins created
+	// before this change, with no registry migration.
+	passthrough := stripKickoffPrompt(entry.PassthroughArgs)
 	if entry.SessionID != "" && resumeID(passthrough) == "" {
 		passthrough = append(passthrough, "--resume", entry.SessionID)
 	}
