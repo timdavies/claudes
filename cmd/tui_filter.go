@@ -78,8 +78,10 @@ func (m tuiModel) updateFilterKey(msg tea.KeyMsg) (tuiModel, tea.Cmd, bool) {
 		m.status = ""
 		return m, nil, true
 	case "enter":
-		// Accept the highlighted match and open it; leave the filter mode.
+		// Accept the highlighted match and open it; leave filter mode and clear
+		// the query so the next '/' starts fresh instead of prefilled.
 		m.filtering = false
+		m.filter = ""
 		md, cmd := m.activate()
 		if mm, ok := md.(tuiModel); ok {
 			return mm, cmd, true

@@ -57,6 +57,24 @@ func TestFilterJumpsAndFilters(t *testing.T) {
 	}
 }
 
+func TestFilterEnterClearsQuery(t *testing.T) {
+	m := filterModel()
+	m, _ = send(m, key("/"))
+	for _, r := range "bifrost" {
+		m, _ = send(m, key(string(r)))
+	}
+	if m.filter == "" {
+		t.Fatal("filter should be populated before enter")
+	}
+	m, _ = send(m, special(tea.KeyEnter))
+	if m.filtering {
+		t.Error("enter should leave filter mode")
+	}
+	if m.filter != "" {
+		t.Errorf("enter should clear the query, got %q", m.filter)
+	}
+}
+
 func TestFilterBackspaceWidensAgain(t *testing.T) {
 	m := filterModel()
 	m, _ = send(m, key("/"))
