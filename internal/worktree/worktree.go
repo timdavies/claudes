@@ -54,7 +54,7 @@ func Ensure(repoRoot, branch, path string) (created bool, err error) {
 	if branchExists(repoRoot, branch) {
 		args = append(args, path, branch)
 	} else {
-		args = append(args, "-b", branch, path, "HEAD")
+		args = append(args, "-b", branch, path, baseRef(repoRoot))
 	}
 	if out, err := exec.Command("git", args...).CombinedOutput(); err != nil {
 		_ = exec.Command("git", "-C", repoRoot, "worktree", "prune").Run()
@@ -143,11 +143,66 @@ func branchExists(repoRoot, branch string) bool {
 	return exec.Command("git", "-C", repoRoot, "show-ref", "--verify", "--quiet", "refs/heads/"+branch).Run() == nil
 }
 
+// baseRef resolves the ref a NEW worktree branch should fork from. New branches
+// must start from the repo's default branch, not the checkout's current HEAD —
+// otherwise a checkout parked on a feature branch leaks that branch's commits
+// into every spawned worktree's PR diff.
+//
+// Resolution chain, first that resolves wins; the final fallback is "HEAD", so
+// this is never worse than the old behavior:
+//  1. remote default branch (git symbolic-ref refs/remotes/origin/HEAD) —
+//     handles main-vs-master automatically.
+//  2. remote present but HEAD unset: origin/main, then origin/master.
+//  3. no remote: local main, then master.
+//  4. nothing resolvable (detached, bare, no default): "HEAD".
+//
+// When the resolved ref is remote-tracking, a best-effort fetch first refreshes
+// it to the current remote tip; fetch failure (no network, sandbox) is ignored.
+func baseRef(repoRoot string) string {
+	if out, err := exec.Command("git", "-C", repoRoot, "symbolic-ref", "--quiet", "refs/remotes/origin/HEAD").Output(); err == nil {
+		if ref := strings.TrimPrefix(strings.TrimSpace(string(out)), "refs/remotes/"); ref != "" {
+			return fetchedRemoteRef(repoRoot, ref)
+		}
+	}
+	if hasRemoteOrigin(repoRoot) {
+		for _, b := range []string{"main", "master"} {
+			if remoteRefExists(repoRoot, "origin/"+b) {
+				return fetchedRemoteRef(repoRoot, "origin/"+b)
+			}
+		}
+	}
+	for _, b := range []string{"main", "master"} {
+		if branchExists(repoRoot, b) {
+			return b
+		}
+	}
+	return "HEAD"
+}
+
+// fetchedRemoteRef best-effort refreshes a remote-tracking ref (e.g.
+// "origin/main") to the current remote tip, then returns it. Fetch failure is
+// swallowed — we fall back to whatever the local remote-tracking ref already
+// points at, never aborting the spawn.
+func fetchedRemoteRef(repoRoot, remoteRef string) string {
+	if short := strings.TrimPrefix(remoteRef, "origin/"); short != remoteRef {
+		_ = exec.Command("git", "-C", repoRoot, "fetch", "origin", short).Run()
+	}
+	return remoteRef
+}
+
+func hasRemoteOrigin(repoRoot string) bool {
+	return exec.Command("git", "-C", repoRoot, "remote", "get-url", "origin").Run() == nil
+}
+
+func remoteRefExists(repoRoot, remoteRef string) bool {
+	return exec.Command("git", "-C", repoRoot, "show-ref", "--verify", "--quiet", "refs/remotes/"+remoteRef).Run() == nil
+}
+
 // Create adds a worktree at path on a new branch off the repo's current HEAD.
 // A partial failure (git creates the branch, then fails to lay down the dir)
 // is cleaned up so a retry isn't blocked by a leftover branch.
 func Create(repoRoot, branch, path string) error {
-	out, err := exec.Command("git", "-C", repoRoot, "worktree", "add", "-b", branch, path, "HEAD").CombinedOutput()
+	out, err := exec.Command("git", "-C", repoRoot, "worktree", "add", "-b", branch, path, baseRef(repoRoot)).CombinedOutput()
 	if err != nil {
 		_ = exec.Command("git", "-C", repoRoot, "worktree", "prune").Run()
 		_ = exec.Command("git", "-C", repoRoot, "branch", "-D", branch).Run()
