@@ -96,8 +96,11 @@ var newCmd = &cobra.Command{
 			}
 		}
 		// Default the agent into its own git worktree (branch + path named for
-		// the session), unless opted out, sandboxed, or not in a git repo.
-		resolved.Dir = resolveWorktreeDir(resolved.Dir, displayName, newNoWT || newInPlace, resolved.WorktreeCopy)
+		// the session), unless opted out or not in a git repo.
+		resolved.Dir, err = resolveWorktreeDir(resolved.Dir, displayName, newNoWT || newInPlace, resolved.WorktreeCopy)
+		if err != nil {
+			return err
+		}
 
 		full := session.FullName(cfg.Prefix, displayName)
 
@@ -219,24 +222,26 @@ func spawnSession(client *tmux.Client, cfg *config.Config, resolved config.Resol
 // resolveWorktreeDir returns the directory the session should run in. By
 // default each new agent gets its own git worktree (branch + path named for the
 // session, reused across resume) so parallel agents don't fight over one
-// checkout. It falls back to dir in place — silently for non-git dirs, with a
-// one-line warning when the add fails — and skips entirely when the user opts
-// out. We attempt the add rather than pre-checking the sandbox: a sandboxed
-// shell can still create the worktree when the path is write-allowlisted (e.g.
-// ~/Projects/grow-worktrees), and a real EPERM just degrades to in-place.
-func resolveWorktreeDir(dir, name string, optOut bool, copyPaths []string) string {
+// checkout. It runs in-place ONLY when the user opted out (--no-worktree) or
+// the dir isn't a git repo — both deliberate. When an isolated worktree was
+// intended but the add fails, it returns an error to ABORT the spawn rather
+// than silently degrading to in-place: running in the main checkout drops the
+// agent onto the user's working branch, where it could reset --hard over
+// uncommitted work.
+func resolveWorktreeDir(dir, name string, optOut bool, copyPaths []string) (string, error) {
 	if optOut {
-		return dir
+		return dir, nil
 	}
 	repo, err := worktree.RepoRoot(dir)
 	if err != nil {
-		return dir // not a git repo — run in place
+		return dir, nil // not a git repo — run in place
 	}
 	path := worktree.StablePath(repo, name)
 	created, err := worktree.Ensure(repo, name, path)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "claudes: worktree setup failed (%v) — running in place\n", err)
-		return dir
+		return "", fmt.Errorf("worktree setup failed for %q: %w\n"+
+			"refusing to run in the main checkout (it could clobber your working branch); "+
+			"pass --no-worktree to run in place deliberately", name, err)
 	}
 	// Carry over per-project personal-context files (CLAUDE.local.md, .env, …)
 	// that git worktree add doesn't bring. Only on creation; copy failures are
@@ -246,7 +251,7 @@ func resolveWorktreeDir(dir, name string, optOut bool, copyPaths []string) strin
 			fmt.Fprintf(os.Stderr, "claudes: worktree_copy partial (%v)\n", err)
 		}
 	}
-	return path
+	return path, nil
 }
 
 func mustJSON(v any) string {
