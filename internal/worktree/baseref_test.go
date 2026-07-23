@@ -81,6 +81,33 @@ func TestBaseRefRemoteDefault(t *testing.T) {
 	}
 }
 
+// Regression: a remote-tracking base (origin/main) must NOT set up upstream
+// tracking, since that writes the main repo's .git/config — which the sandbox
+// denies, failing the worktree add (255) and silently running in-place.
+func TestEnsureFromRemoteBaseWritesNoUpstream(t *testing.T) {
+	origin := newRepoOnBranch(t, "main")
+	commit(t, origin, "g", "more")
+	clone := t.TempDir()
+	gitRun(t, clone, "clone", origin, ".")
+	gitRun(t, clone, "checkout", "-b", "feature-z")
+
+	path := StablePath(clone, "agent-r")
+	created, err := Ensure(clone, "agent-r", path)
+	if err != nil || !created {
+		t.Fatalf("Ensure: created=%v err=%v", created, err)
+	}
+	// --no-track means no branch.<name>.remote/.merge is written into config.
+	if out, _ := exec.Command("git", "-C", clone, "config", "branch.agent-r.remote").Output(); strings.TrimSpace(string(out)) != "" {
+		t.Errorf("upstream tracking was set (config written): %q", out)
+	}
+	// Still forked from the remote default tip.
+	want, _ := exec.Command("git", "-C", clone, "rev-parse", "origin/main").Output()
+	got, _ := exec.Command("git", "-C", path, "rev-parse", "HEAD").Output()
+	if strings.TrimSpace(string(got)) != strings.TrimSpace(string(want)) {
+		t.Errorf("worktree HEAD %s, want origin/main %s", got, want)
+	}
+}
+
 // The real regression: parked on a feature branch, a new worktree must fork
 // from the default branch, not carry the feature-only commit.
 func TestEnsureForksFromDefaultNotHEAD(t *testing.T) {

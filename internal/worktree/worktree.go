@@ -54,7 +54,12 @@ func Ensure(repoRoot, branch, path string) (created bool, err error) {
 	if branchExists(repoRoot, branch) {
 		args = append(args, path, branch)
 	} else {
-		args = append(args, "-b", branch, path, baseRef(repoRoot))
+		// --no-track: when the base is a remote-tracking ref (origin/main),
+		// git would otherwise set up upstream tracking, writing the main repo's
+		// .git/config — which the CC sandbox denies (255), silently dropping us
+		// into an in-place run on the user's branch. We don't need tracking here
+		// anyway; `push -u` sets it later.
+		args = append(args, "--no-track", "-b", branch, path, baseRef(repoRoot))
 	}
 	if out, err := exec.Command("git", args...).CombinedOutput(); err != nil {
 		_ = exec.Command("git", "-C", repoRoot, "worktree", "prune").Run()
@@ -202,7 +207,8 @@ func remoteRefExists(repoRoot, remoteRef string) bool {
 // A partial failure (git creates the branch, then fails to lay down the dir)
 // is cleaned up so a retry isn't blocked by a leftover branch.
 func Create(repoRoot, branch, path string) error {
-	out, err := exec.Command("git", "-C", repoRoot, "worktree", "add", "-b", branch, path, baseRef(repoRoot)).CombinedOutput()
+	// --no-track: see Ensure — avoids writing upstream config (sandbox-denied).
+	out, err := exec.Command("git", "-C", repoRoot, "worktree", "add", "--no-track", "-b", branch, path, baseRef(repoRoot)).CombinedOutput()
 	if err != nil {
 		_ = exec.Command("git", "-C", repoRoot, "worktree", "prune").Run()
 		_ = exec.Command("git", "-C", repoRoot, "branch", "-D", branch).Run()
