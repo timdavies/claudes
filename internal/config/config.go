@@ -60,6 +60,36 @@ type Config struct {
 	Path string `toml:"-"`
 }
 
+// ResolveModelAlias maps a model alias (opus/sonnet/haiku, or any key defined
+// in [models]) to its configured target model ID. Anything not in the map —
+// full model IDs, empty strings, unknown names — passes through unchanged, so
+// it's safe to call on an already-resolved value (idempotent).
+func ResolveModelAlias(models map[string]string, name string) string {
+	if target, ok := models[name]; ok {
+		return target
+	}
+	return name
+}
+
+// RewriteModelAliases returns a copy of args with every `--model <alias>` /
+// `--model=<alias>` value resolved through the models map. This is the
+// passthrough choke point: `claudes new foo -- --model opus` reaches claude as
+// the configured opus target, not bare "opus". Non-model args and unrecognized
+// model values are left untouched.
+func RewriteModelAliases(models map[string]string, args []string) []string {
+	out := append([]string(nil), args...)
+	for i := 0; i < len(out); i++ {
+		switch {
+		case out[i] == "--model" && i+1 < len(out):
+			out[i+1] = ResolveModelAlias(models, out[i+1])
+			i++
+		case strings.HasPrefix(out[i], "--model="):
+			out[i] = "--model=" + ResolveModelAlias(models, strings.TrimPrefix(out[i], "--model="))
+		}
+	}
+	return out
+}
+
 // TabBackend returns the active tab-integration backend: "iterm2" or "" (off).
 func (c *Config) TabBackend() string {
 	return c.Tabs.Backend

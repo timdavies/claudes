@@ -43,6 +43,15 @@ Optional, at `~/.config/claudes/config.toml`:
 # or per-project; an explicit `-- --permission-mode <x>` passthrough still wins.
 permission_mode = "auto"
 
+# Model aliases. The default `model` and any `--model <alias>` (including the
+# --opus/--sonnet/--haiku flags and `-- --model opus` passthrough) resolve
+# through this map before reaching claude, so you can pin a concrete build once.
+model = "opus"
+
+[models]
+opus   = "claude-opus-5[1m]"
+sonnet = "claude-sonnet-5"
+
 [projects.myapp]
 dir             = "~/projects/myapp"
 default_args    = ["--dangerously-skip-permissions", "--worktree"]

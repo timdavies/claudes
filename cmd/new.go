@@ -147,6 +147,15 @@ func spawnSession(client *tmux.Client, cfg *config.Config, resolved config.Resol
 	displayName string, passthrough []string, openTab bool) error {
 	full := session.FullName(cfg.Prefix, displayName)
 
+	// Single model-alias choke point: resolve the effective model and any
+	// `--model <alias>` carried in default_args or passthrough through the
+	// [models] map, so every spawned agent lands on the configured target
+	// (e.g. opus → claude-opus-5[1m]) rather than a bare alias. Idempotent, so
+	// values already resolved upstream (alias flags, project model) are fine.
+	resolved.Model = config.ResolveModelAlias(resolved.Models, resolved.Model)
+	resolved.DefaultArgs = config.RewriteModelAliases(resolved.Models, resolved.DefaultArgs)
+	passthrough = config.RewriteModelAliases(resolved.Models, passthrough)
+
 	// Assign the Claude Code session UUID ourselves so the transcript path is
 	// deterministic (~/.claude/projects/<encoded-dir>/<uuid>.jsonl). The daemon
 	// reads it back to estimate cost. A passthrough --session-id wins, so don't
@@ -364,7 +373,7 @@ func init() {
 	newCmd.Flags().StringVarP(&newDir, "dir", "d", "", "Working directory")
 	newCmd.Flags().StringVar(&newProject, "project", "", "Project name from config")
 	newCmd.Flags().BoolVarP(&newAttach, "attach", "a", false, "Attach immediately")
-	newCmd.Flags().StringVar(&newModel, "model", "", "Model name (passes --model to claude)")
+	newCmd.Flags().StringVar(&newModel, "model", "", "Model name or [models] alias (opus/sonnet/haiku resolve via config)")
 	newCmd.Flags().BoolVar(&newHaiku, "haiku", false, "Use haiku model")
 	newCmd.Flags().BoolVar(&newSonnet, "sonnet", false, "Use sonnet model")
 	newCmd.Flags().BoolVar(&newOpus, "opus", false, "Use opus model")

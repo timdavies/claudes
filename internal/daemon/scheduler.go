@@ -199,6 +199,7 @@ func fireOne(client *tmux.Client, cfg *config.Config, store *schedule.Store, dir
 	if model == "" {
 		model = resolved.Model
 	}
+	model = config.ResolveModelAlias(resolved.Models, model)
 	perm := sc.PermMode
 	if perm == "" {
 		perm = "auto"
@@ -221,7 +222,7 @@ func fireOne(client *tmux.Client, cfg *config.Config, store *schedule.Store, dir
 		"CLAUDES_PERM=" + perm,
 		"CLAUDES_LOG=" + logAbs,
 	}
-	if err := client.NewSession(full, wt, extraEnv, buildFireCmdline(model, sessionUUID, resolved.DefaultArgs)); err != nil {
+	if err := client.NewSession(full, wt, extraEnv, buildFireCmdline(model, sessionUUID, config.RewriteModelAliases(resolved.Models, resolved.DefaultArgs))); err != nil {
 		_ = worktree.Teardown(repo, branch, wt)
 		return err
 	}
