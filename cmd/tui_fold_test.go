@@ -77,6 +77,30 @@ func TestFoldGroupHidesRowsAndSnapsCursor(t *testing.T) {
 	}
 }
 
+func TestConsecutiveFoldedGroupsStackTight(t *testing.T) {
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	m := tuiModel{
+		cfg: &config.Config{Prefix: "claudes-", Projects: map[string]config.Project{}},
+		rows: []agentRow{
+			{Name: "a1", Group: "alpha", Status: session.StatusIdle},
+			{Name: "a2", Group: "alpha", Status: session.StatusIdle},
+			{Name: "b1", Group: "beta", Status: session.StatusIdle},
+			{Name: "b2", Group: "beta", Status: session.StatusIdle},
+		},
+		folds: map[string]bool{foldKeyGroup("alpha"): true, foldKeyGroup("beta"): true},
+	}
+	lines, _, _ := m.bodyGeometry()
+	// Both groups folded → exactly two header lines, no blank padding between.
+	if len(lines) != 2 {
+		t.Fatalf("two folded groups should be two lines, got %d: %q", len(lines), lines)
+	}
+	for i, ln := range lines {
+		if strings.TrimSpace(ln) == "" {
+			t.Fatalf("line %d is blank — folded headers must stack tight: %q", i, lines)
+		}
+	}
+}
+
 func TestFoldPersistsAcrossReload(t *testing.T) {
 	t.Setenv("XDG_CACHE_HOME", t.TempDir())
 	m := foldModel()

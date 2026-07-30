@@ -63,8 +63,10 @@ func (m tuiModel) bodyGeometry() (lines []string, top, bot int) {
 
 	schedFolded := m.isFolded(foldKeySchedules)
 	if sched := renderSchedules(m.schedules, m.schedLastRun, m.schedCost, schedCursor, m.width, schedFolded); sched != "" {
-		if len(lines) > 0 {
-			lines = append(lines, "") // blank separator between the two sections
+		// A folded section stacks tight (no leading blank); expanded keeps its
+		// separating blank line.
+		if len(lines) > 0 && !schedFolded {
+			lines = append(lines, "")
 		}
 		schedStart := len(lines)
 		lines = append(lines, strings.Split(strings.TrimRight(sched, "\n"), "\n")...)
@@ -81,8 +83,8 @@ func (m tuiModel) bodyGeometry() (lines []string, top, bot int) {
 
 	archFolded := m.isFolded(foldKeyArchived)
 	if arch := renderArchived(m.archived, archCursor, m.width, archFolded); arch != "" {
-		if len(lines) > 0 {
-			lines = append(lines, "") // blank separator
+		if len(lines) > 0 && !archFolded {
+			lines = append(lines, "")
 		}
 		archStart := len(lines)
 		lines = append(lines, strings.Split(strings.TrimRight(arch, "\n"), "\n")...)

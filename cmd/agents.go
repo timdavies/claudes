@@ -217,7 +217,6 @@ func renderAgentBlocks(rows []agentRow, cursor, col, width int, folded map[strin
 	if width <= 0 {
 		width = 80
 	}
-	interactive := cursor >= 0
 
 	nameW := 0
 	for _, r := range rows {
@@ -243,20 +242,15 @@ func renderAgentBlocks(rows []agentRow, cursor, col, width int, folded map[strin
 				blocks[i] = "" // hidden under the fold header
 				continue
 			}
-			// Fold header: caret + name + count, standing in for the whole group.
+			// Fold header stands in for the whole group as a single tight line —
+			// no surrounding blank padding, so consecutive folded groups stack
+			// one per line with no gap.
 			label := fmt.Sprintf("▸ %s (%d)", r.Group, groupSize(rows, r.Group))
 			style := cardGroup
 			if i == cursor {
 				style = cardSelected
 			}
-			header := style.Render(label) + "\n"
-			if interactive {
-				header = indentLines(header, "  ")
-			}
-			if i > 0 {
-				header = "\n\n" + header
-			}
-			blocks[i] = header
+			blocks[i] = style.Render(label)
 			continue
 		}
 
@@ -266,9 +260,6 @@ func renderAgentBlocks(rows []agentRow, cursor, col, width int, folded map[strin
 			// the group label just needs its own line — no extra separator. The
 			// ▾ caret marks it as an expanded, foldable section.
 			header = cardGroup.Render("▾ "+r.Group) + "\n"
-			if interactive {
-				header = indentLines(header, "  ")
-			}
 			// A couple of blank lines set each group apart from the one above it
 			// — but not when this is the very first block.
 			if i > 0 {
@@ -349,18 +340,6 @@ func renderAgentBlocks(rows []agentRow, cursor, col, width int, folded map[strin
 		blocks[i] = header + rail.Render(body)
 	}
 	return blocks
-}
-
-// indentLines prefixes every non-empty line of s with prefix. Empty lines are
-// left bare so blank separators between groups stay blank.
-func indentLines(s, prefix string) string {
-	lines := strings.Split(s, "\n")
-	for i, line := range lines {
-		if line != "" {
-			lines[i] = prefix + line
-		}
-	}
-	return strings.Join(lines, "\n")
 }
 
 // prDisplayID renders an attached PR url as a compact "#123" chip. GitHub PR
