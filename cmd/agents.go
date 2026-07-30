@@ -58,10 +58,6 @@ func collectSessions(client *tmux.Client, cfg *config.Config, cache *session.Env
 		}
 		for name, e := range reg.All() {
 			pinOrder[name] = e.Order
-			// Archived agents live in their own view, not the main roster.
-			if e.Archived {
-				continue
-			}
 			if live[name] {
 				continue
 			}
@@ -191,8 +187,8 @@ func statusColor(s session.Status) lipgloss.Color {
 // non-interactive `ls`); col is the selected cell within the cursor row (0 =
 // the agent, 1 = its attached PR); width truncates the second line.
 func renderAgents(rows []agentRow, cursor, col, width int) string {
-	// `ls` never folds — always render every group expanded.
-	return strings.Join(renderAgentBlocks(rows, cursor, col, width, nil), "\n") + "\n"
+	// `ls` never folds — plain layout, every group expanded, no carets.
+	return strings.Join(renderAgentBlocks(rows, cursor, col, width, nil, false), "\n") + "\n"
 }
 
 // renderAgentBlocks renders one block per row (group header + two-line card),
@@ -209,11 +205,41 @@ func groupSize(rows []agentRow, group string) int {
 	return n
 }
 
+// defaultGroupName is the display name for otherwise-ungrouped agents. In the
+// TUI they render as a real, foldable group named this, sitting at the top.
+const defaultGroupName = "main"
+
+// displayGroup maps an agent's stored group to its display/fold name: the empty
+// (ungrouped) group shows as "main".
+func displayGroup(group string) string {
+	if group == "" {
+		return defaultGroupName
+	}
+	return group
+}
+
+// headerLead returns the blank-line padding above a section header. Boundaries
+// where both neighbours are folded stack tight (no blank); any boundary
+// touching an open section gets exactly one blank line. The very first header
+// (i==0) has none. `ls` (non-foldable) keeps its historical two-blank gap.
+func headerLead(i int, prevFolded, thisFolded, foldable bool) string {
+	if i == 0 {
+		return ""
+	}
+	if !foldable {
+		return "\n\n"
+	}
+	if prevFolded && thisFolded {
+		return ""
+	}
+	return "\n"
+}
+
 // renderAgentBlocks builds one render block per row. folded holds collapsed
-// section keys (nil while filtering): a folded named group renders as a single
-// caret header with a count on its first row, and its remaining rows render as
-// empty blocks (skipped by the scroll geometry).
-func renderAgentBlocks(rows []agentRow, cursor, col, width int, folded map[string]bool) []string {
+// section keys (nil while filtering). foldable enables the TUI chrome: caret
+// headers, the "main" default group, folding, and the tight/uniform spacing;
+// `ls` passes false for its plain historical layout.
+func renderAgentBlocks(rows []agentRow, cursor, col, width int, folded map[string]bool, foldable bool) []string {
 	if width <= 0 {
 		width = 80
 	}
@@ -226,45 +252,42 @@ func renderAgentBlocks(rows []agentRow, cursor, col, width int, folded map[strin
 	}
 
 	blocks := make([]string, len(rows))
-	prevGroup, started := "", false
+	prevGroup, started, prevFolded := "", false, false
 	for i, r := range rows {
-		// Emit a header whenever the group changes. Rows are pre-sorted
-		// group-major, so each group's header appears exactly once, above its
-		// first agent. The default group ("") is headerless — it just sits at
-		// the top, matching how ungrouped agents have always rendered.
+		// Rows are pre-sorted group-major, so a group change marks the header row.
 		isFirst := r.Group != prevGroup || !started
 		prevGroup = r.Group
 		started = true
 
-		collapsed := r.Group != "" && folded[foldKeyGroup(r.Group)]
-		if collapsed {
+		display := displayGroup(r.Group)
+		hasHeader := foldable || r.Group != "" // ls leaves the default group headerless
+		thisFolded := foldable && folded[foldKeyGroup(display)]
+
+		if thisFolded {
 			if !isFirst {
 				blocks[i] = "" // hidden under the fold header
 				continue
 			}
-			// Fold header stands in for the whole group as a single tight line —
-			// no surrounding blank padding, so consecutive folded groups stack
-			// one per line with no gap.
-			label := fmt.Sprintf("▸ %s (%d)", r.Group, groupSize(rows, r.Group))
+			label := fmt.Sprintf("▸ %s (%d)", display, groupSize(rows, r.Group))
 			style := cardGroup
 			if i == cursor {
 				style = cardSelected
 			}
-			blocks[i] = style.Render(label)
+			blocks[i] = headerLead(i, prevFolded, true, foldable) + style.Render(label)
+			prevFolded = true
 			continue
 		}
 
 		var header string
-		if isFirst && r.Group != "" {
-			// Each card already trails a blank line (see the join below), so
-			// the group label just needs its own line — no extra separator. The
-			// ▾ caret marks it as an expanded, foldable section.
-			header = cardGroup.Render("▾ "+r.Group) + "\n"
-			// A couple of blank lines set each group apart from the one above it
-			// — but not when this is the very first block.
-			if i > 0 {
-				header = "\n\n" + header
+		if isFirst && hasHeader {
+			label := display
+			if foldable {
+				label = "▾ " + display // caret marks it as an expanded, foldable section
 			}
+			header = headerLead(i, prevFolded, false, foldable) + cardGroup.Render(label) + "\n"
+		}
+		if isFirst {
+			prevFolded = false
 		}
 
 		name := nameCell(r)

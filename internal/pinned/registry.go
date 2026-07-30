@@ -30,16 +30,12 @@ type Entry struct {
 	// assigns sequential values; new pins get max+1 so they land at the bottom.
 	Order int `json:"order,omitempty"`
 
-	// Archived parks a session: its process is stopped but the entry is kept so
-	// it can be resurrected later with its context. Archived entries are hidden
-	// from the main roster and listed separately. The extra fields below make
-	// restore context-complete — SessionID lets us `claude --resume` the actual
-	// conversation rather than spawning a fresh one.
-	Archived    bool   `json:"archived,omitempty"`
+	// SessionID lets a resurrect `claude --resume` the actual conversation
+	// rather than spawning a fresh one. PR/Description carry context stamped
+	// from the live session's env.
 	SessionID   string `json:"session_id,omitempty"`
 	PR          string `json:"pr,omitempty"`
 	Description string `json:"description,omitempty"`
-	ArchivedAt  string `json:"archived_at,omitempty"`
 }
 
 type Registry struct {
@@ -84,12 +80,17 @@ func (r *Registry) WithLock(fn func(agents map[string]Entry) (dirty bool, err er
 	if rf.Agents == nil {
 		rf.Agents = map[string]Entry{}
 	}
+	// Migration: the "archived" concept was removed. Drop any entry a legacy
+	// file still marks archived so it doesn't resurface as a normal pin. Older
+	// files load fine either way (unknown JSON keys are ignored); this just
+	// clears the stragglers and persists the cleanup on next write.
+	migrated := dropLegacyArchived(b, rf.Agents)
 
 	dirty, err := fn(rf.Agents)
 	if err != nil {
 		return err
 	}
-	if !dirty {
+	if !dirty && !migrated {
 		return nil
 	}
 	return writeAtomic(r.Path, rf)
@@ -180,23 +181,30 @@ func (r *Registry) MaxOrder() int {
 	return maxOrder
 }
 
-// SetArchived flips an existing entry's Archived flag (stamping ArchivedAt when
-// archiving). Returns an error if the name isn't in the registry.
-func (r *Registry) SetArchived(name string, archived bool) error {
-	return r.WithLock(func(agents map[string]Entry) (bool, error) {
-		e, ok := agents[name]
-		if !ok {
-			return false, errors.New("no such entry: " + name)
+// dropLegacyArchived removes entries that a legacy registry file marked
+// "archived": true (a concept since removed). Returns true if it dropped any.
+func dropLegacyArchived(raw []byte, agents map[string]Entry) bool {
+	if len(raw) == 0 {
+		return false
+	}
+	var legacy struct {
+		Agents map[string]struct {
+			Archived bool `json:"archived"`
+		} `json:"agents"`
+	}
+	if json.Unmarshal(raw, &legacy) != nil {
+		return false
+	}
+	dropped := false
+	for name, l := range legacy.Agents {
+		if l.Archived {
+			if _, ok := agents[name]; ok {
+				delete(agents, name)
+				dropped = true
+			}
 		}
-		e.Archived = archived
-		if archived {
-			e.ArchivedAt = time.Now().UTC().Format(time.RFC3339)
-		} else {
-			e.ArchivedAt = ""
-		}
-		agents[name] = e
-		return true, nil
-	})
+	}
+	return dropped
 }
 
 func (r *Registry) All() map[string]Entry {

@@ -101,6 +101,37 @@ func TestConsecutiveFoldedGroupsStackTight(t *testing.T) {
 	}
 }
 
+func TestOpenBoundaryHasExactlyOneBlank(t *testing.T) {
+	rows := []agentRow{
+		{Name: "a1", Group: "alpha", Status: session.StatusIdle},
+		{Name: "b1", Group: "beta", Status: session.StatusIdle},
+	}
+	// alpha folded, beta open — a boundary touching an open section.
+	blocks := renderAgentBlocks(rows, -1, 0, 80, map[string]bool{foldKeyGroup("alpha"): true}, true)
+	var lines []string
+	for _, b := range blocks {
+		if b == "" {
+			continue
+		}
+		lines = append(lines, strings.Split(b, "\n")...)
+	}
+	ai, bi := -1, -1
+	for i, l := range lines {
+		if strings.Contains(l, "alpha") {
+			ai = i
+		}
+		if strings.Contains(l, "beta") {
+			bi = i
+		}
+	}
+	if ai < 0 || bi < 0 || bi <= ai {
+		t.Fatalf("headers not found in order: %q", lines)
+	}
+	if bi-ai-1 != 1 || strings.TrimSpace(lines[ai+1]) != "" {
+		t.Fatalf("expected exactly one blank line between folded and open headers, got %q", lines[ai+1:bi])
+	}
+}
+
 func TestFoldPersistsAcrossReload(t *testing.T) {
 	t.Setenv("XDG_CACHE_HOME", t.TempDir())
 	m := foldModel()
@@ -159,15 +190,15 @@ func TestEnterExpandsFoldedGroup(t *testing.T) {
 	}
 }
 
-func TestUngroupedCannotFold(t *testing.T) {
+func TestUngroupedFoldsAsMainGroup(t *testing.T) {
 	t.Setenv("XDG_CACHE_HOME", t.TempDir())
 	m := foldModel()
-	m.cursor = 0 // the default-group row
+	m.cursor = 0 // the ungrouped ("main") row
 	m, _ = send(m, key(" "))
-	if len(m.folds) != 0 {
-		t.Fatalf("ungrouped agents can't fold, got folds %v", m.folds)
+	if !m.isFolded(foldKeyGroup(defaultGroupName)) {
+		t.Fatalf("ungrouped agents should fold under the 'main' group, got folds %v", m.folds)
 	}
-	if !strings.Contains(m.status, "can't be folded") {
-		t.Errorf("expected a status hint, got %q", m.status)
+	if !m.groupFolded("") {
+		t.Error("groupFolded(\"\") should report the main group folded")
 	}
 }

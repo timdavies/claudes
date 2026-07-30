@@ -54,9 +54,6 @@ func runTUI() error {
 	m := tuiModel{cfg: cfg, client: client, width: terminalWidth(), envCache: session.NewEnvCache(), folds: loadFolds()}
 	m.rows = loadAgentRows(client, cfg, m.envCache)
 	m.schedules, m.schedLastRun, m.schedCost = loadSchedulesNow()
-	if reg, err := pinnedRegistry(); err == nil {
-		m.archived = archivedEntries(reg)
-	}
 	(&m).normalizeRegion()
 
 	p := tea.NewProgram(m, tea.WithAltScreen())
@@ -113,12 +110,8 @@ type tuiModel struct {
 	schedCursor  int
 	health       string // daemon fire-failure warning, "" when healthy
 
-	// Archived agents occupy a third region below schedules.
-	archived   []archivedEntry
-	archCursor int
-
-	// folds is the set of collapsed sections (agent groups + the schedules and
-	// archived sections), keyed via foldKey*. Persisted across restarts.
+	// folds is the set of collapsed sections (agent groups + the schedules
+	// section), keyed via foldKey*. Persisted across restarts.
 	folds map[string]bool
 
 	// Incremental filter over the agent list, toggled with '/'. While active,
@@ -197,19 +190,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tickMsg:
 		// Kick off an async refresh; the next tick is scheduled when it lands.
-		return m, tea.Batch(loadRowsCmd(m.client, m.cfg, m.envCache), loadSchedulesCmd(), loadArchivedCmd())
-	case archivedMsg:
-		m.archived = []archivedEntry(msg)
-		(&m).normalizeRegion()
-		(&m).ensureVisible()
-		return m, nil
-	case archActionMsg:
-		if msg.err != nil {
-			m.status = msg.err.Error()
-		} else {
-			m.status = msg.status
-		}
-		return m, tea.Batch(loadRowsCmd(m.client, m.cfg, m.envCache), loadArchivedCmd())
+		return m, tea.Batch(loadRowsCmd(m.client, m.cfg, m.envCache), loadSchedulesCmd())
 	case rowsMsg:
 		m.rows = mergeRows(m.rows, []agentRow(msg), &m.cursor)
 		if m.filtering {
@@ -316,9 +297,6 @@ func (m tuiModel) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.region == regionSchedules {
 		return m.updateScheduleList(msg)
 	}
-	if m.region == regionArchived {
-		return m.updateArchivedList(msg)
-	}
 	if m.filtering {
 		if mm, cmd, handled := m.updateFilterKey(msg); handled {
 			return mm, cmd
@@ -345,9 +323,6 @@ func (m tuiModel) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		} else if len(m.schedules) > 0 {
 			m.region = regionSchedules
 			m.schedCursor = 0
-		} else if len(m.archived) > 0 {
-			m.region = regionArchived
-			m.archCursor = 0
 		}
 	case " ", "space", "z":
 		(&m).toggleFoldCurrent()
@@ -402,12 +377,6 @@ func (m tuiModel) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			row := m.rows[m.cursor]
 			m.status = ""
 			return m, togglePinCmd(m.client, m.cfg, row)
-		}
-	case "A":
-		if m.cursor >= 0 && m.cursor < len(m.rows) {
-			row := m.rows[m.cursor]
-			m.status = "archiving " + row.Name + "…"
-			return m, archiveSelectedCmd(m.client, m.cfg, session.Session{Name: row.Name, Dir: row.Dir, Project: row.Project})
 		}
 	case "N":
 		m.form = newNewForm(m.cfg, m.rows)
@@ -653,7 +622,7 @@ func (m tuiModel) View() string {
 			return m.logView.view(m.width, m.height)
 		}
 	}
-	if len(m.rows) == 0 && len(m.schedules) == 0 && len(m.archived) == 0 {
+	if len(m.rows) == 0 && len(m.schedules) == 0 {
 		return "no sessions — press N to spawn one\n\nN new  q quit\n"
 	}
 
@@ -693,12 +662,10 @@ func (m tuiModel) footer() string {
 		return prompt
 	}
 	var hint string
-	if m.region == regionArchived {
-		hint = "↑/↓ move  space fold  enter/U restore  r refresh  q quit"
-	} else if m.region == regionSchedules {
+	if m.region == regionSchedules {
 		hint = "↑/↓ move  space fold  enter logs  N new  E edit  T on/off  R run  X delete  q quit"
 	} else {
-		hint = "↑/↓ move  space fold  enter focus  N new  P pin  A archive  X kill  q quit"
+		hint = "↑/↓ move  space fold  enter focus  N new  P pin  X kill  q quit"
 		if m.cursor >= 0 && m.cursor < len(m.rows) && m.rows[m.cursor].PR != "" {
 			if m.col == 1 {
 				hint = "←/→ select  enter open PR  ↑/↓ move  N new  P pin  X kill  q quit"

@@ -16,14 +16,12 @@ import (
 // line span [top, bot] occupied by the active row (agent or schedule), so the
 // viewport can keep it on screen. It composes exactly what View renders.
 func (m tuiModel) bodyGeometry() (lines []string, top, bot int) {
-	agentsCursor, schedCursor, archCursor := -1, -1, -1
+	agentsCursor, schedCursor := -1, -1
 	switch m.region {
 	case regionAgents:
 		agentsCursor = m.cursor
 	case regionSchedules:
 		schedCursor = m.schedCursor
-	case regionArchived:
-		archCursor = m.archCursor
 	}
 
 	// While filtering, render only matching rows; the active row's index within
@@ -46,7 +44,7 @@ func (m tuiModel) bodyGeometry() (lines []string, top, bot int) {
 	}
 	var blocks []string
 	if len(viewRows) > 0 {
-		blocks = renderAgentBlocks(viewRows, blockCursor, m.col, m.width, folds)
+		blocks = renderAgentBlocks(viewRows, blockCursor, m.col, m.width, folds, true)
 	}
 	starts := make([]int, len(blocks))
 	for i, b := range blocks {
@@ -63,9 +61,13 @@ func (m tuiModel) bodyGeometry() (lines []string, top, bot int) {
 
 	schedFolded := m.isFolded(foldKeySchedules)
 	if sched := renderSchedules(m.schedules, m.schedLastRun, m.schedCost, schedCursor, m.width, schedFolded); sched != "" {
-		// A folded section stacks tight (no leading blank); expanded keeps its
-		// separating blank line.
-		if len(lines) > 0 && !schedFolded {
+		// Boundary spacing: two folded sections butt together (no blank); any
+		// boundary touching an open section gets exactly one blank line.
+		lastAgentFolded := false
+		if !m.filtering && len(viewRows) > 0 {
+			lastAgentFolded = m.groupFolded(viewRows[len(viewRows)-1].Group)
+		}
+		if len(lines) > 0 && !(lastAgentFolded && schedFolded) {
 			lines = append(lines, "")
 		}
 		schedStart := len(lines)
@@ -81,23 +83,6 @@ func (m tuiModel) bodyGeometry() (lines []string, top, bot int) {
 		}
 	}
 
-	archFolded := m.isFolded(foldKeyArchived)
-	if arch := renderArchived(m.archived, archCursor, m.width, archFolded); arch != "" {
-		if len(lines) > 0 && !archFolded {
-			lines = append(lines, "")
-		}
-		archStart := len(lines)
-		lines = append(lines, strings.Split(strings.TrimRight(arch, "\n"), "\n")...)
-		if m.region == regionArchived {
-			if archFolded {
-				top, bot = archStart, archStart
-			} else {
-				// Header sits on archStart; entry i on archStart+1+i.
-				top = archStart + 1 + m.archCursor
-				bot = top
-			}
-		}
-	}
 	return lines, top, bot
 }
 

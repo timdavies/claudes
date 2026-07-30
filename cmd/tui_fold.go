@@ -13,10 +13,7 @@ import (
 // navigation. The set persists across TUI restarts in a small JSON file next to
 // the other cache state, so a folded schedules section stays folded.
 
-const (
-	foldKeySchedules = "\x00schedules" // NUL-prefixed so it can't collide with a group name
-	foldKeyArchived  = "\x00archived"
-)
+const foldKeySchedules = "\x00schedules" // NUL-prefixed so it can't collide with a group name
 
 // foldKeyGroup namespaces an agent group's fold key. Groups are folded by name.
 func foldKeyGroup(group string) string { return "group:" + group }
@@ -118,7 +115,7 @@ func (m *tuiModel) snapCursorVisible(preferDir int) {
 func (m *tuiModel) isFolded(key string) bool { return m.folds != nil && m.folds[key] }
 
 func (m *tuiModel) groupFolded(group string) bool {
-	return group != "" && m.isFolded(foldKeyGroup(group))
+	return m.isFolded(foldKeyGroup(displayGroup(group)))
 }
 
 // isRowHidden reports whether agent row i is collapsed out of view: it's in a
@@ -146,18 +143,12 @@ func (m *tuiModel) toggleFoldCurrent() {
 	switch m.region {
 	case regionSchedules:
 		key = foldKeySchedules
-	case regionArchived:
-		key = foldKeyArchived
 	default:
 		if m.cursor < 0 || m.cursor >= len(m.rows) {
 			return
 		}
 		group := m.rows[m.cursor].Group
-		if group == "" {
-			m.status = "ungrouped agents can't be folded"
-			return
-		}
-		key = foldKeyGroup(group)
+		key = foldKeyGroup(displayGroup(group))
 		if !m.folds[key] { // about to fold — park cursor on the representative row
 			for i := range m.rows {
 				if m.rows[i].Group == group {

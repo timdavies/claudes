@@ -26,7 +26,6 @@ type tuiRegion int
 const (
 	regionAgents tuiRegion = iota
 	regionSchedules
-	regionArchived
 )
 
 type schedulesMsg struct {
@@ -103,31 +102,14 @@ func (m *tuiModel) normalizeRegion() {
 	if m.region == regionSchedules && len(m.schedules) == 0 {
 		m.region = regionAgents
 	}
-	if m.region == regionArchived && len(m.archived) == 0 {
-		if len(m.schedules) > 0 {
-			m.region = regionSchedules
-		} else {
-			m.region = regionAgents
-		}
-	}
-	if len(m.rows) == 0 {
-		if len(m.schedules) > 0 {
-			m.region = regionSchedules
-		} else if len(m.archived) > 0 {
-			m.region = regionArchived
-		}
+	if len(m.rows) == 0 && len(m.schedules) > 0 {
+		m.region = regionSchedules
 	}
 	if m.schedCursor >= len(m.schedules) {
 		m.schedCursor = max(0, len(m.schedules)-1)
 	}
 	if m.schedCursor < 0 {
 		m.schedCursor = 0
-	}
-	if m.archCursor >= len(m.archived) {
-		m.archCursor = max(0, len(m.archived)-1)
-	}
-	if m.archCursor < 0 {
-		m.archCursor = 0
 	}
 }
 
@@ -158,9 +140,6 @@ func (m tuiModel) updateScheduleList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "down", "j":
 		if !folded && m.schedCursor < len(m.schedules)-1 {
 			m.schedCursor++
-		} else if len(m.archived) > 0 {
-			m.region = regionArchived
-			m.archCursor = 0
 		}
 	case "g", "home":
 		m.schedCursor = 0
