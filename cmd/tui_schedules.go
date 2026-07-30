@@ -140,19 +140,23 @@ func (m tuiModel) currentSchedule() (schedule.Schedule, bool) {
 
 // updateScheduleList handles keys while the cursor is in the schedules region.
 func (m tuiModel) updateScheduleList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	folded := m.isFolded(foldKeySchedules)
 	switch msg.String() {
 	case "q", "esc", "ctrl+c":
 		return m, tea.Quit
+	case " ", "space", "z":
+		(&m).toggleFoldCurrent()
 	case "up", "k":
-		if m.schedCursor > 0 {
+		if !folded && m.schedCursor > 0 {
 			m.schedCursor--
 		} else if len(m.rows) > 0 {
 			m.region = regionAgents
 			m.cursor = len(m.rows) - 1
 			m.col = 0
+			(&m).snapCursorVisible(-1)
 		}
 	case "down", "j":
-		if m.schedCursor < len(m.schedules)-1 {
+		if !folded && m.schedCursor < len(m.schedules)-1 {
 			m.schedCursor++
 		} else if len(m.archived) > 0 {
 			m.region = regionArchived
@@ -316,12 +320,21 @@ var (
 // cursor is the selected index, or -1 when the region is inactive. cost maps a
 // schedule id to its cumulative run cost (USD), shown as a green $ matching the
 // agent list and `tasks ls`.
-func renderSchedules(schedules []schedule.Schedule, lastRun map[string]string, cost map[string]float64, cursor, width int) string {
+func renderSchedules(schedules []schedule.Schedule, lastRun map[string]string, cost map[string]float64, cursor, width int, folded bool) string {
 	if len(schedules) == 0 {
 		return ""
 	}
 	if width <= 0 {
 		width = 80
+	}
+	// Collapsed: a single caret header standing in for the whole section, which
+	// otherwise eats a lot of vertical space.
+	if folded {
+		label := fmt.Sprintf("▸ schedules (%d)", len(schedules))
+		if cursor >= 0 {
+			return cardSelected.Render(label) + "\n"
+		}
+		return schedHeader.Render(label) + "\n"
 	}
 	now := time.Now()
 	// Pre-compute each column's raw text so lanes can be padded to a common
@@ -348,7 +361,7 @@ func renderSchedules(schedules []schedule.Schedule, lastRun map[string]string, c
 	}
 
 	var b strings.Builder
-	b.WriteString(schedHeader.Render("schedules") + "\n")
+	b.WriteString(schedHeader.Render("▾ schedules") + "\n")
 	for i, r := range rows {
 		dot := schedOff.Render("○")
 		if r.sc.Enabled {

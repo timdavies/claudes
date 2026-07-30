@@ -39,13 +39,21 @@ func (m tuiModel) bodyGeometry() (lines []string, top, bot int) {
 		}
 	}
 
+	// Folds only apply outside filtering (a filter shows every match).
+	folds := m.folds
+	if m.filtering {
+		folds = nil
+	}
 	var blocks []string
 	if len(viewRows) > 0 {
-		blocks = renderAgentBlocks(viewRows, blockCursor, m.col, m.width)
+		blocks = renderAgentBlocks(viewRows, blockCursor, m.col, m.width, folds)
 	}
 	starts := make([]int, len(blocks))
 	for i, b := range blocks {
 		starts[i] = len(lines)
+		if b == "" {
+			continue // hidden row under a fold — contributes no lines
+		}
 		lines = append(lines, strings.Split(b, "\n")...)
 	}
 	if m.region == regionAgents && blockCursor >= 0 && blockCursor < len(blocks) {
@@ -53,29 +61,39 @@ func (m tuiModel) bodyGeometry() (lines []string, top, bot int) {
 		bot = top + lipgloss.Height(blocks[blockCursor]) - 1
 	}
 
-	if sched := renderSchedules(m.schedules, m.schedLastRun, m.schedCost, schedCursor, m.width); sched != "" {
+	schedFolded := m.isFolded(foldKeySchedules)
+	if sched := renderSchedules(m.schedules, m.schedLastRun, m.schedCost, schedCursor, m.width, schedFolded); sched != "" {
 		if len(lines) > 0 {
 			lines = append(lines, "") // blank separator between the two sections
 		}
 		schedStart := len(lines)
 		lines = append(lines, strings.Split(strings.TrimRight(sched, "\n"), "\n")...)
 		if m.region == regionSchedules {
-			// Header sits on schedStart; schedule i on schedStart+1+i.
-			top = schedStart + 1 + m.schedCursor
-			bot = top
+			if schedFolded {
+				top, bot = schedStart, schedStart // only the header shows
+			} else {
+				// Header sits on schedStart; schedule i on schedStart+1+i.
+				top = schedStart + 1 + m.schedCursor
+				bot = top
+			}
 		}
 	}
 
-	if arch := renderArchived(m.archived, archCursor, m.width); arch != "" {
+	archFolded := m.isFolded(foldKeyArchived)
+	if arch := renderArchived(m.archived, archCursor, m.width, archFolded); arch != "" {
 		if len(lines) > 0 {
 			lines = append(lines, "") // blank separator
 		}
 		archStart := len(lines)
 		lines = append(lines, strings.Split(strings.TrimRight(arch, "\n"), "\n")...)
 		if m.region == regionArchived {
-			// Header sits on archStart; entry i on archStart+1+i.
-			top = archStart + 1 + m.archCursor
-			bot = top
+			if archFolded {
+				top, bot = archStart, archStart
+			} else {
+				// Header sits on archStart; entry i on archStart+1+i.
+				top = archStart + 1 + m.archCursor
+				bot = top
+			}
 		}
 	}
 	return lines, top, bot

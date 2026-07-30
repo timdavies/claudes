@@ -82,7 +82,7 @@ func TestRenderSchedulesTruncationIsAnsiSafe(t *testing.T) {
 		{ID: "2", Name: "short", Kind: schedule.KindInterval, EverySec: 600, Enabled: false},
 	}
 	const width = 30
-	out := renderSchedules(scheds, map[string]string{"1": "ok 2m ago"}, nil, 0, width)
+	out := renderSchedules(scheds, map[string]string{"1": "ok 2m ago"}, nil, 0, width, false)
 
 	for _, line := range strings.Split(strings.TrimRight(out, "\n"), "\n") {
 		if w := lipgloss.Width(line); w > width {
@@ -103,7 +103,7 @@ func TestRenderSchedulesShowsCumulativeCost(t *testing.T) {
 		{ID: "16", Name: "deprecation-watch", Kind: schedule.KindDaily, AtClock: "09:00", Enabled: true},
 		{ID: "99", Name: "never-run", Kind: schedule.KindDaily, AtClock: "09:00", Enabled: true},
 	}
-	out := renderSchedules(scheds, nil, map[string]float64{"16": 3.59}, -1, 200)
+	out := renderSchedules(scheds, nil, map[string]float64{"16": 3.59}, -1, 200, false)
 	if !strings.Contains(out, "$3.59") {
 		t.Fatalf("expected cumulative $3.59 on the deprecation-watch row:\n%s", out)
 	}

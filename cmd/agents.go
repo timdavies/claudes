@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"fmt"
 	"sort"
 	"strings"
 
@@ -190,13 +191,29 @@ func statusColor(s session.Status) lipgloss.Color {
 // non-interactive `ls`); col is the selected cell within the cursor row (0 =
 // the agent, 1 = its attached PR); width truncates the second line.
 func renderAgents(rows []agentRow, cursor, col, width int) string {
-	return strings.Join(renderAgentBlocks(rows, cursor, col, width), "\n") + "\n"
+	// `ls` never folds — always render every group expanded.
+	return strings.Join(renderAgentBlocks(rows, cursor, col, width, nil), "\n") + "\n"
 }
 
 // renderAgentBlocks renders one block per row (group header + two-line card),
 // without joining them. The TUI needs the blocks separately to measure each
 // row's line span for scroll math; renderAgents just joins them for `ls`.
-func renderAgentBlocks(rows []agentRow, cursor, col, width int) []string {
+// groupSize counts how many rows belong to the named group.
+func groupSize(rows []agentRow, group string) int {
+	n := 0
+	for _, r := range rows {
+		if r.Group == group {
+			n++
+		}
+	}
+	return n
+}
+
+// renderAgentBlocks builds one render block per row. folded holds collapsed
+// section keys (nil while filtering): a folded named group renders as a single
+// caret header with a count on its first row, and its remaining rows render as
+// empty blocks (skipped by the scroll geometry).
+func renderAgentBlocks(rows []agentRow, cursor, col, width int, folded map[string]bool) []string {
 	if width <= 0 {
 		width = 80
 	}
@@ -216,24 +233,47 @@ func renderAgentBlocks(rows []agentRow, cursor, col, width int) []string {
 		// group-major, so each group's header appears exactly once, above its
 		// first agent. The default group ("") is headerless — it just sits at
 		// the top, matching how ungrouped agents have always rendered.
-		var header string
-		if r.Group != prevGroup || !started {
-			if r.Group != "" {
-				// Each card already trails a blank line (see the join below), so
-				// the group label just needs its own line — no extra separator.
-				header = cardGroup.Render(r.Group) + "\n"
-				if interactive {
-					header = indentLines(header, "  ")
-				}
-				// A couple of blank lines set each group apart from the one
-				// above it — but not when this is the very first block (no
-				// default group preceding it).
-				if i > 0 {
-					header = "\n\n" + header
-				}
+		isFirst := r.Group != prevGroup || !started
+		prevGroup = r.Group
+		started = true
+
+		collapsed := r.Group != "" && folded[foldKeyGroup(r.Group)]
+		if collapsed {
+			if !isFirst {
+				blocks[i] = "" // hidden under the fold header
+				continue
 			}
-			prevGroup = r.Group
-			started = true
+			// Fold header: caret + name + count, standing in for the whole group.
+			label := fmt.Sprintf("▸ %s (%d)", r.Group, groupSize(rows, r.Group))
+			style := cardGroup
+			if i == cursor {
+				style = cardSelected
+			}
+			header := style.Render(label) + "\n"
+			if interactive {
+				header = indentLines(header, "  ")
+			}
+			if i > 0 {
+				header = "\n\n" + header
+			}
+			blocks[i] = header
+			continue
+		}
+
+		var header string
+		if isFirst && r.Group != "" {
+			// Each card already trails a blank line (see the join below), so
+			// the group label just needs its own line — no extra separator. The
+			// ▾ caret marks it as an expanded, foldable section.
+			header = cardGroup.Render("▾ "+r.Group) + "\n"
+			if interactive {
+				header = indentLines(header, "  ")
+			}
+			// A couple of blank lines set each group apart from the one above it
+			// — but not when this is the very first block.
+			if i > 0 {
+				header = "\n\n" + header
+			}
 		}
 
 		name := nameCell(r)

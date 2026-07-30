@@ -51,7 +51,7 @@ func runTUI() error {
 	client := newClient(cfg)
 	ensureDaemonForCmd(false)
 
-	m := tuiModel{cfg: cfg, client: client, width: terminalWidth(), envCache: session.NewEnvCache()}
+	m := tuiModel{cfg: cfg, client: client, width: terminalWidth(), envCache: session.NewEnvCache(), folds: loadFolds()}
 	m.rows = loadAgentRows(client, cfg, m.envCache)
 	m.schedules, m.schedLastRun, m.schedCost = loadSchedulesNow()
 	if reg, err := pinnedRegistry(); err == nil {
@@ -116,6 +116,10 @@ type tuiModel struct {
 	// Archived agents occupy a third region below schedules.
 	archived   []archivedEntry
 	archCursor int
+
+	// folds is the set of collapsed sections (agent groups + the schedules and
+	// archived sections), keyed via foldKey*. Persisted across restarts.
+	folds map[string]bool
 
 	// Incremental filter over the agent list, toggled with '/'. While active,
 	// only rows whose name or group contains filter (case-insensitive) render,
@@ -330,16 +334,14 @@ func (m tuiModel) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "up", "k":
 		if m.filtering {
 			(&m).moveMatch(-1)
-		} else if m.cursor > 0 {
-			m.cursor--
-			m.col = 0
+		} else {
+			(&m).moveCursor(-1)
 		}
 	case "down", "j":
 		if m.filtering {
 			(&m).moveMatch(1)
-		} else if m.cursor < len(m.rows)-1 {
-			m.cursor++
-			m.col = 0
+		} else if (&m).moveCursor(1) {
+			// moved within the agent list
 		} else if len(m.schedules) > 0 {
 			m.region = regionSchedules
 			m.schedCursor = 0
@@ -347,6 +349,8 @@ func (m tuiModel) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.region = regionArchived
 			m.archCursor = 0
 		}
+	case " ", "space", "z":
+		(&m).toggleFoldCurrent()
 	case "right", "l":
 		// Step onto the PR cell, but only when this row actually has one.
 		if m.cursor >= 0 && m.cursor < len(m.rows) && m.rows[m.cursor].PR != "" {
@@ -361,16 +365,20 @@ func (m tuiModel) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "pgdown", "ctrl+d":
 		m.cursor = min(len(m.rows)-1, m.cursor+m.pageStep())
 		m.col = 0
+		(&m).snapCursorVisible(1)
 	case "pgup", "ctrl+u":
 		m.cursor = max(0, m.cursor-m.pageStep())
 		m.col = 0
+		(&m).snapCursorVisible(-1)
 	case "g", "home":
 		m.cursor = 0
 		m.col = 0
+		(&m).snapCursorVisible(1)
 	case "G", "end":
 		if len(m.rows) > 0 {
 			m.cursor = len(m.rows) - 1
 			m.col = 0
+			(&m).snapCursorVisible(-1)
 		}
 	case "enter":
 		return m.activate()
@@ -592,6 +600,12 @@ func (m tuiModel) activate() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	r := m.rows[m.cursor]
+	// On a collapsed group's header row, Enter expands it rather than focusing
+	// the (hidden) first agent — matching the fold's "show me this section" intent.
+	if !m.filtering && m.groupFolded(r.Group) {
+		(&m).toggleFoldCurrent()
+		return m, nil
+	}
 	// PR cell selected → open it in the browser instead of focusing the tab.
 	if m.col == 1 && r.PR != "" {
 		m.status = "opening " + prDisplayID(r.PR)
@@ -680,11 +694,11 @@ func (m tuiModel) footer() string {
 	}
 	var hint string
 	if m.region == regionArchived {
-		hint = "↑/↓ move  enter/U restore  r refresh  q quit"
+		hint = "↑/↓ move  space fold  enter/U restore  r refresh  q quit"
 	} else if m.region == regionSchedules {
-		hint = "↑/↓ move  enter logs  N new  E edit  T on/off  R run  X delete  r refresh  q quit"
+		hint = "↑/↓ move  space fold  enter logs  N new  E edit  T on/off  R run  X delete  q quit"
 	} else {
-		hint = "↑/↓ move  enter focus  N new  P pin  A archive  X kill  r refresh  q quit"
+		hint = "↑/↓ move  space fold  enter focus  N new  P pin  A archive  X kill  q quit"
 		if m.cursor >= 0 && m.cursor < len(m.rows) && m.rows[m.cursor].PR != "" {
 			if m.col == 1 {
 				hint = "←/→ select  enter open PR  ↑/↓ move  N new  P pin  X kill  q quit"

@@ -19,7 +19,7 @@ func TestScheduleColumnsAlign(t *testing.T) {
 	last := map[string]string{"1": "done 15m ago", "3": "done 21h ago"}
 	cost := map[string]float64{"1": 78.29, "3": 12.81, "4": 3.64}
 
-	out := renderSchedules(scs, last, cost, -1, 200)
+	out := renderSchedules(scs, last, cost, -1, 200, false)
 	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
 	if len(lines) != 5 { // header + 4 rows
 		t.Fatalf("expected header + 4 rows, got %d lines", len(lines))

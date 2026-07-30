@@ -40,11 +40,14 @@ func (m tuiModel) currentArchived() (archivedEntry, bool) {
 
 // updateArchivedList handles keys while the cursor is in the archived region.
 func (m tuiModel) updateArchivedList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	folded := m.isFolded(foldKeyArchived)
 	switch msg.String() {
 	case "q", "esc", "ctrl+c":
 		return m, tea.Quit
+	case " ", "space", "z":
+		(&m).toggleFoldCurrent()
 	case "up", "k":
-		if m.archCursor > 0 {
+		if !folded && m.archCursor > 0 {
 			m.archCursor--
 		} else if len(m.schedules) > 0 {
 			m.region = regionSchedules
@@ -53,9 +56,10 @@ func (m tuiModel) updateArchivedList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.region = regionAgents
 			m.cursor = len(m.rows) - 1
 			m.col = 0
+			(&m).snapCursorVisible(-1)
 		}
 	case "down", "j":
-		if m.archCursor < len(m.archived)-1 {
+		if !folded && m.archCursor < len(m.archived)-1 {
 			m.archCursor++
 		}
 	case "g", "home":
@@ -100,11 +104,18 @@ func unarchiveSelectedCmd(client *tmux.Client, cfg *config.Config, name string) 
 
 // renderArchived renders the "Archived (N)" section. cursor is the selected
 // index, or -1 when the region is inactive. Returns "" when there are none.
-func renderArchived(entries []archivedEntry, cursor, width int) string {
+func renderArchived(entries []archivedEntry, cursor, width int, folded bool) string {
 	if len(entries) == 0 {
 		return ""
 	}
-	header := cardGroup.Render(fmt.Sprintf("Archived (%d)", len(entries)))
+	if folded {
+		label := fmt.Sprintf("▸ Archived (%d)", len(entries))
+		if cursor >= 0 {
+			return cardSelected.Render(label)
+		}
+		return cardGroup.Render(label)
+	}
+	header := cardGroup.Render(fmt.Sprintf("▾ Archived (%d)", len(entries)))
 	lines := []string{header}
 	for i, ae := range entries {
 		label := ae.name
